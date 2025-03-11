@@ -122,9 +122,19 @@ st.header("Account Value Records")
 if not account_data.empty:
     net_worth_df = account_data.groupby("date")["value"].sum().reset_index()
     net_worth_df.columns = ["date", "net_worth"]
-    st.dataframe(account_data)
+    edited_df = st.data_editor(
+        account_data,
+        num_rows="dynamic",
+        disabled=["account", "date"],
+        hide_index=True,
+    )
+    # Check for changes and update the database
+    if not edited_df.equals(account_data):
+        for index, row in edited_df.iterrows():
+            update_account_value(row["date"], row["account"], row["value"])
+        st.success("Updated the database with changes.")
     st.header("Net Worth Summary")
-    st.dataframe(net_worth_df)
+    st.dataframe(net_worth_df, hide_index=True)
 else:
     st.info("No account data to display. Add some records!")
 
