@@ -2,19 +2,34 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import sqlite3
-from enum import Enum
+from enum import StrEnum
 
 # Set the database file path
 DB_PATH = 'net_worth.db'
 
 st.title('Net Worth Tracking Dashboard')
 
-# Account types enumeration
-class Account(Enum):
-    A = 'A'
-    B = 'B'
-    C = 'C'
-    D = 'D'
+class Account(StrEnum):
+    TRADING212_INVEST = "Trading212 Invest"
+    TRADING212_STOCK_ISA = "Trading212 Stock ISA"
+    TRADING212_CASH_ISA = "Trading212 Cash ISA"
+    TRADING212_CFD = "Trading212 CFD"
+    CLUB_LLOYDS_MONTHLY_SAVER = "Club Lloyds Monthly Saver"
+    LLOYDS_MONTHLY_SAVER = "Lloyds Monthly Saver"
+    CHASE_SAVER = "Chase Saver"
+    CHASE_CURRENT_ACCOUNT = "Chase Current Account"
+    CHASE_ROUND_UP_ACCOUNT = "Chase Round Up Account"
+    NS_AND_I = "NS&I"
+    L_AND_G = "L&G"
+
+
+# Account categories and accounts
+def get_accounts():
+    return {
+        'Invest': [Account.TRADING212_INVEST, Account.TRADING212_STOCK_ISA, Account.TRADING212_CFD],
+        'Cash': [Account.TRADING212_CASH_ISA, Account.CLUB_LLOYDS_MONTHLY_SAVER, Account.LLOYDS_MONTHLY_SAVER, Account.CHASE_CURRENT_ACCOUNT, Account.CHASE_ROUND_UP_ACCOUNT, Account.NS_AND_I, ],
+        'Pension': [Account.L_AND_G]
+    }
 
 # Create database connection and tables
 def create_connection():
@@ -52,11 +67,13 @@ def delete_entries_by_date(date):
 
 # Load existing account data
 account_data = load_account_data()
+accounts = get_accounts()
 
 # Account Value Entry Form
 st.header('Account Values')
 date = st.date_input('Date')
-account = st.selectbox('Select Account', [e.value for e in Account])
+category = st.selectbox('Select Category', list(accounts.keys()))
+account = st.selectbox('Select Account', accounts[category])
 account_value = st.number_input('Account Value', step=100.0)
 
 if st.button('Add/Update Account Value'):
@@ -83,11 +100,21 @@ if not account_data.empty:
 else:
     st.info('No account data to display. Add some records!')
 
-# Plotting Line Chart
+# Plotting Line Charts
 st.header('Net Worth Over Time')
 if not account_data.empty:
     net_worth_df['date'] = pd.to_datetime(net_worth_df['date'])
-    fig = px.line(net_worth_df, x='date', y='net_worth', title='Net Worth Over Time', markers=True)
-    st.plotly_chart(fig)
+    fig_networth = px.line(net_worth_df, x='date', y='net_worth', title='Net Worth Over Time', markers=True)
+    st.plotly_chart(fig_networth)
+
+    # Combined category plot
+    fig_category = px.line(title='Category Trends Over Time')
+    for category, acc_list in accounts.items():
+        category_df = account_data[account_data['account'].isin(acc_list)]
+        if not category_df.empty:
+            category_df = category_df.groupby('date')['value'].sum().reset_index()
+            category_df['date'] = pd.to_datetime(category_df['date'])
+            fig_category.add_scatter(x=category_df['date'], y=category_df['value'], mode='lines+markers', name=category)
+    st.plotly_chart(fig_category)
 else:
     st.info('No data to display. Add some records!')
