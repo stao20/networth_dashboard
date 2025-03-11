@@ -9,3 +9,8 @@ dependencies = [
     "plotly>=6.0.0",
     "streamlit>=1.43.1",
 ]
+
+[dependency-groups]
+lint = [
+    "ruff>=0.9.10",
+]
