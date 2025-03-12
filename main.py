@@ -11,7 +11,8 @@ st.title("Net Worth Tracking Dashboard")
 
 
 class Account(StrEnum):
-    TRADING212_INVEST = "Trading212 Invest"
+    TRADING212_INVEST_STOCK = "Trading212 Invest Stock"
+    TRADING212_INVEST_CASH = "Trading212 Invest Cash"
     TRADING212_STOCK_ISA = "Trading212 Stock ISA"
     TRADING212_CASH_ISA = "Trading212 Cash ISA"
     TRADING212_CFD = "Trading212 CFD"
@@ -28,11 +29,12 @@ class Account(StrEnum):
 def get_accounts():
     return {
         "Invest": [
-            Account.TRADING212_INVEST,
+            Account.TRADING212_INVEST_STOCK,
             Account.TRADING212_STOCK_ISA,
             Account.TRADING212_CFD,
         ],
         "Cash": [
+            Account.TRADING212_INVEST_CASH,
             Account.TRADING212_CASH_ISA,
             Account.CLUB_LLOYDS_MONTHLY_SAVER,
             Account.LLOYDS_MONTHLY_SAVER,
