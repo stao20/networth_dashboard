@@ -7,7 +7,11 @@ from config import Config
 
 db_handler = Config.DB_HANDLER
 
-st.title("Net Worth Tracking Dashboard" + (":money_with_wings: " if Config.is_prod() else ":dollar:"))
+st.title(
+    "Net Worth Tracking Dashboard"
+    + (":money_with_wings: " if Config.is_prod() else ":dollar:")
+)
+
 
 class Account(StrEnum):
     TRADING212_INVEST = "Trading212 Invest"

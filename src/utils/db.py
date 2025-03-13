@@ -36,12 +36,12 @@ class SQLiteHandler(DatabaseHandler):
         return cls._instance
 
     def create_table(self):
-        query = '''CREATE TABLE IF NOT EXISTS account_values (
+        query = """CREATE TABLE IF NOT EXISTS account_values (
             date TEXT,
             account TEXT,
             value REAL,
             PRIMARY KEY (date, account)
-        )'''
+        )"""
         self.conn.execute(query)
         self.conn.commit()
 
@@ -50,13 +50,13 @@ class SQLiteHandler(DatabaseHandler):
         return pd.read_sql(query, self.conn)
 
     def save_account_value(self, date, account, value):
-        query = '''INSERT OR REPLACE INTO account_values (date, account, value)
-                   VALUES (?, ?, ?)'''
+        query = """INSERT OR REPLACE INTO account_values (date, account, value)
+                   VALUES (?, ?, ?)"""
         self.conn.execute(query, (date, account, value))
         self.conn.commit()
 
     def update_account_value(self, date, account, value):
-        query = '''UPDATE account_values SET value = ? WHERE date = ? AND account = ?'''
+        query = """UPDATE account_values SET value = ? WHERE date = ? AND account = ?"""
         self.conn.execute(query, (value, date, account))
         self.conn.commit()
 
@@ -72,8 +72,9 @@ class SupabaseHandler(DatabaseHandler):
         SUPABASE_KEY = os.getenv("SUPABASE_KEY")
         if not SUPABASE_URL or not SUPABASE_KEY:
             from dotenv import load_dotenv
+
             load_dotenv()
-            logging.info("Loading environment variables")   
+            logging.info("Loading environment variables")
             SUPABASE_URL = os.getenv("SUPABASE_URL")
             SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
@@ -84,10 +85,14 @@ class SupabaseHandler(DatabaseHandler):
         return pd.DataFrame(response.data)
 
     def save_account_value(self, date, account, value):
-        self.supabase.table("account_values").upsert({"date": date, "account": account, "value": value}).execute()
+        self.supabase.table("account_values").upsert(
+            {"date": date, "account": account, "value": value}
+        ).execute()
 
     def update_account_value(self, date, account, value):
-        self.supabase.table("account_values").update({"value": value}).match({"date": date, "account": account}).execute()
+        self.supabase.table("account_values").update({"value": value}).match(
+            {"date": date, "account": account}
+        ).execute()
 
     def delete_entries_by_date(self, date):
         self.supabase.table("account_values").delete().match({"date": date}).execute()
