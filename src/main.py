@@ -1,18 +1,16 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import sqlite3
 from enum import StrEnum
 
-# Set the database file path
-DB_PATH = "net_worth.db"
+from config import Config
 
-st.title("Net Worth Tracking Dashboard")
+db_handler = Config.DB_HANDLER
 
+st.title("Net Worth Tracking Dashboard" + (":money_with_wings: " if Config.is_prod() else ":dollar:"))
 
 class Account(StrEnum):
-    TRADING212_INVEST_STOCK = "Trading212 Invest Stock"
-    TRADING212_INVEST_CASH = "Trading212 Invest Cash"
+    TRADING212_INVEST = "Trading212 Invest"
     TRADING212_STOCK_ISA = "Trading212 Stock ISA"
     TRADING212_CASH_ISA = "Trading212 Cash ISA"
     TRADING212_CFD = "Trading212 CFD"
@@ -29,12 +27,11 @@ class Account(StrEnum):
 def get_accounts():
     return {
         "Invest": [
-            Account.TRADING212_INVEST_STOCK,
+            Account.TRADING212_INVEST,
             Account.TRADING212_STOCK_ISA,
             Account.TRADING212_CFD,
         ],
         "Cash": [
-            Account.TRADING212_INVEST_CASH,
             Account.TRADING212_CASH_ISA,
             Account.CLUB_LLOYDS_MONTHLY_SAVER,
             Account.LLOYDS_MONTHLY_SAVER,
@@ -46,57 +43,8 @@ def get_accounts():
     }
 
 
-# Create database connection and tables
-def create_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute(
-        """CREATE TABLE IF NOT EXISTS account_values (date TEXT, account TEXT, value REAL, PRIMARY KEY (date, account))"""
-    )
-    return conn
-
-
-# Load account values data
-def load_account_data():
-    conn = create_connection()
-    data = pd.read_sql_query(
-        "SELECT * FROM account_values ORDER BY date, account", conn
-    )
-    conn.close()
-    return data
-
-
-# Save an account value to SQLite
-def save_account_value(date, account, value):
-    conn = create_connection()
-    conn.execute(
-        "INSERT OR REPLACE INTO account_values (date, account, value) VALUES (?, ?, ?)",
-        (date, account, value),
-    )
-    conn.commit()
-    conn.close()
-
-
-# Update an existing account value
-def update_account_value(date, account, value):
-    conn = create_connection()
-    conn.execute(
-        "UPDATE account_values SET value = ? WHERE date = ? AND account = ?",
-        (value, date, account),
-    )
-    conn.commit()
-    conn.close()
-
-
-# Delete all entries for a specific date
-def delete_entries_by_date(date):
-    conn = create_connection()
-    conn.execute("DELETE FROM account_values WHERE date = ?", (date,))
-    conn.commit()
-    conn.close()
-
-
 # Load existing account data
-account_data = load_account_data()
+account_data = db_handler.load_account_data()
 accounts = get_accounts()
 
 # Account Value Entry Form
@@ -107,17 +55,17 @@ account = st.selectbox("Select Account", accounts[category])
 account_value = st.number_input("Account Value", step=100.0)
 
 if st.button("Add/Update Account Value"):
-    save_account_value(date.strftime("%Y-%m-%d"), account, account_value)
+    db_handler.save_account_value(date.strftime("%Y-%m-%d"), account, account_value)
     st.success(f"Account {account} value for {date} saved successfully!")
-    account_data = load_account_data()
+    account_data = db_handler.load_account_data()
 
 # Remove Entries by Date
 st.header("Remove Entries")
 delete_date = st.date_input("Date to Remove")
 if st.button("Remove All Entries for Date"):
-    delete_entries_by_date(delete_date.strftime("%Y-%m-%d"))
+    db_handler.delete_entries_by_date(delete_date.strftime("%Y-%m-%d"))
     st.success(f"All entries for {delete_date} have been removed.")
-    account_data = load_account_data()
+    account_data = db_handler.load_account_data()
 
 # Display Account Data
 st.header("Account Value Records")
@@ -127,16 +75,16 @@ if not account_data.empty:
     edited_df = st.data_editor(
         account_data,
         num_rows="dynamic",
+        column_config={"value": {"editable": True}},
         disabled=["account", "date"],
-        hide_index=True,
     )
     # Check for changes and update the database
     if not edited_df.equals(account_data):
         for index, row in edited_df.iterrows():
-            update_account_value(row["date"], row["account"], row["value"])
+            db_handler.update_account_value(row["date"], row["account"], row["value"])
         st.success("Updated the database with changes.")
     st.header("Net Worth Summary")
-    st.dataframe(net_worth_df, hide_index=True)
+    st.dataframe(net_worth_df)
 else:
     st.info("No account data to display. Add some records!")
 

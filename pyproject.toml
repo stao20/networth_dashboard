@@ -8,9 +8,13 @@ dependencies = [
     "pandas>=2.2.3",
     "plotly>=6.0.0",
     "streamlit>=1.43.1",
+    "supabase>=2.13.0",
 ]
 
 [dependency-groups]
+dev = [
+    "python-dotenv>=1.0.1",
+]
 lint = [
     "ruff>=0.9.10",
 ]
