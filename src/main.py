@@ -14,7 +14,8 @@ st.title(
 
 
 class Account(StrEnum):
-    TRADING212_INVEST = "Trading212 Invest"
+    TRADING212_INVEST_CASH = "Trading212 Invest Cash"
+    TRADING212_INVEST_INVEST = "Trading212 Invest Investments"
     TRADING212_STOCK_ISA = "Trading212 Stock ISA"
     TRADING212_CASH_ISA = "Trading212 Cash ISA"
     TRADING212_CFD = "Trading212 CFD"
@@ -31,14 +32,16 @@ class Account(StrEnum):
 def get_accounts():
     return {
         "Invest": [
-            Account.TRADING212_INVEST,
+            Account.TRADING212_INVEST_INVEST,
             Account.TRADING212_STOCK_ISA,
             Account.TRADING212_CFD,
         ],
         "Cash": [
+            Account.TRADING212_INVEST_CASH,
             Account.TRADING212_CASH_ISA,
             Account.CLUB_LLOYDS_MONTHLY_SAVER,
             Account.LLOYDS_MONTHLY_SAVER,
+            Account.CHASE_SAVER,
             Account.CHASE_CURRENT_ACCOUNT,
             Account.CHASE_ROUND_UP_ACCOUNT,
             Account.NS_AND_I,
