@@ -26,6 +26,7 @@ class Account(StrEnum):
     CHASE_ROUND_UP_ACCOUNT = "Chase Round Up Account"
     NS_AND_I = "NS&I"
     L_AND_G = "L&G"
+    REVOLUT_SAVER = "Revolut Saver"
 
 
 # Account categories and accounts
@@ -44,6 +45,7 @@ def get_accounts():
             Account.CHASE_SAVER,
             Account.CHASE_CURRENT_ACCOUNT,
             Account.CHASE_ROUND_UP_ACCOUNT,
+            Account.REVOLUT_SAVER,
             Account.NS_AND_I,
         ],
         "Pension": [Account.L_AND_G],
@@ -120,3 +122,28 @@ if not account_data.empty:
     st.plotly_chart(fig_category)
 else:
     st.info("No data to display. Add some records!")
+
+# Add pie chart of latest category values
+if not account_data.empty:
+    st.header("Category Distribution")
+    # Get most recent date
+    latest_date = account_data['date'].max()
+    latest_data = account_data[account_data['date'] == latest_date]
+    
+    # Calculate category totals
+    category_totals = {}
+    for category, acc_list in accounts.items():
+        category_total = latest_data[latest_data['account'].isin(acc_list)]['value'].sum()
+        if category_total != 0:  # Only include non-zero categories
+            category_totals[category] = category_total
+    
+    if category_totals:
+        fig_pie = px.pie(
+            values=list(category_totals.values()),
+            names=list(category_totals.keys()),
+            title=f"Category Distribution as of {latest_date}"
+        )
+        st.plotly_chart(fig_pie)
+    else:
+        st.info("No category data available for pie chart.")
+
