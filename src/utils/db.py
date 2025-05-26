@@ -96,3 +96,14 @@ class SupabaseHandler(DatabaseHandler):
 
     def delete_entries_by_date(self, date):
         self.supabase.table("account_values").delete().match({"date": date}).execute()
+
+    ### Networth Simulator
+    def load_pots(self):
+        response = self.supabase.table("networth_pots").select("*").execute()
+        return response.data if response.data else []
+
+    def save_pots(self, pots):
+        self.supabase.table("networth_pots").upsert(pots).execute()
+
+    def delete_pot(self, pot_id):
+        self.supabase.table("networth_pots").delete().match({"id": pot_id}).execute()
