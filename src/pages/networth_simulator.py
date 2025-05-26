@@ -31,6 +31,7 @@ def simulate_net_worth(years=30):
     months = years * 12
     timeline = np.arange(months)
     total_networth = np.zeros(months)
+    pot_breakdown = {}
     for pot_item in st.session_state.pots:
         initial = pot_item.initial if pot_item.initial is not None else 0.0
         monthly = pot_item.monthly if pot_item.monthly is not None else 0.0
@@ -43,15 +44,25 @@ def simulate_net_worth(years=30):
             contributions = monthly * (((1 + rate / 12) ** timeline - 1) / (rate / 12))
         networth_for_pot = growth + contributions
         total_networth += networth_for_pot
-    return timeline, total_networth
+        pot_breakdown[pot_item.name] = networth_for_pot
+    return timeline, total_networth, pot_breakdown
 
 if st.button('Simulate Net Worth'):
     if not st.session_state.pots:
         st.warning("Please add at least one pot to simulate.")
     else:
-        timeline, networth_result = simulate_net_worth()
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=timeline / 12, y=networth_result, mode='lines', name='Total Net Worth'))
-        fig.update_layout(title='Net Worth Growth Over Time', xaxis_title='Years', yaxis_title='Net Worth')
-        st.plotly_chart(fig)
+        timeline, networth_result, pot_breakdown = simulate_net_worth()
+        
+        # Total Net Worth Plot
+        fig_total = go.Figure()
+        fig_total.add_trace(go.Scatter(x=timeline / 12, y=networth_result, mode='lines', name='Total Net Worth'))
+        fig_total.update_layout(title='Total Net Worth Growth Over Time', xaxis_title='Years', yaxis_title='Net Worth')
+        st.plotly_chart(fig_total)
+
+        # Pot Breakdown Plot
+        fig_breakdown = go.Figure()
+        for name, data in pot_breakdown.items():
+            fig_breakdown.add_trace(go.Scatter(x=timeline / 12, y=data, mode='lines', name=name))
+        fig_breakdown.update_layout(title='Net Worth Breakdown by Pot', xaxis_title='Years', yaxis_title='Net Worth')
+        st.plotly_chart(fig_breakdown)
     
