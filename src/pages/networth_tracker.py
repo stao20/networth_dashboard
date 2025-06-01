@@ -27,6 +27,7 @@ class Account(StrEnum):
     NS_AND_I = "NS&I"
     L_AND_G = "L&G"
     REVOLUT_SAVER = "Revolut Saver"
+    Q4U = "Q4U"
 
 
 # Account categories and accounts
@@ -36,6 +37,7 @@ def get_accounts():
             Account.TRADING212_INVEST_INVEST,
             Account.TRADING212_STOCK_ISA,
             Account.TRADING212_CFD,
+            Account.Q4U,
         ],
         "Cash": [
             Account.TRADING212_INVEST_CASH,
