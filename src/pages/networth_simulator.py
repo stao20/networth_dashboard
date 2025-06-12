@@ -12,8 +12,6 @@ def add_pot():
     new_pot = Pot(name=f"Pot {len(st.session_state.pots) + 1}")
     st.session_state.pots.append(new_pot)
 
-st.button('Add Pot', on_click=add_pot)
-
 def remove_pot(index):
     del st.session_state.pots[index]
     st.rerun()
@@ -26,6 +24,12 @@ for i, pot in enumerate(st.session_state.pots):
     pot.rate = st.number_input(f'Annual Return Rate (%) ({pot.name})', min_value=0.0, max_value=100.0, value=float(pot.rate) if pot.rate is not None else 0.0, key=f"rate_{i}_{pot.name}")
     if st.button(f'Remove {pot.name}', key=f"remove_{i}_{pot.name}"):
         remove_pot(i)
+
+st.divider()
+col1, col2, col3 = st.columns([1, 1, 1])
+with col2:
+    st.button('Add Pot', on_click=add_pot, use_container_width=True)
+st.divider()
 
 def simulate_net_worth(years=30):
     months = years * 12
