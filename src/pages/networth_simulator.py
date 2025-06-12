@@ -47,27 +47,50 @@ def simulate_net_worth(years=30):
         pot_breakdown[pot_item.name] = networth_for_pot
     return timeline, total_networth, pot_breakdown
 
-if st.button('Simulate Net Worth'):
-    if not st.session_state.pots:
-        st.warning("Please add at least one pot to simulate.")
-    else:
-        timeline, networth_result, pot_breakdown = simulate_net_worth()
+if not st.session_state.pots:
+    st.warning("Please add at least one pot to simulate.")
+else:
+    st.write("### Simulation Settings")
+    years = st.slider("Simulation Period (Years)", min_value=1, max_value=50, value=30, key="simulation_years")
+    
+    # Add pot selection
+    selected_pots = st.multiselect(
+        "Select Pots to Display",
+        options=[pot.name for pot in st.session_state.pots],
+        default=[pot.name for pot in st.session_state.pots],
+        key="selected_pots"
+    )
+    
+    timeline, networth_result, pot_breakdown = simulate_net_worth(years=years)
         
-        # Total Net Worth Plot
-        fig_total = go.Figure()
-        fig_total.add_trace(go.Scatter(x=timeline / 12, y=networth_result, mode='lines', name='Total Net Worth'))
-        fig_total.update_layout(title='Total Net Worth Growth Over Time', xaxis_title='Years', yaxis_title='Net Worth')
-        st.plotly_chart(fig_total)
+    filtered_pot_breakdown = {name: data for name, data in pot_breakdown.items() if name in selected_pots}
+    filtered_networth = sum(filtered_pot_breakdown.values())
+    
+    fig_total = go.Figure()
+    fig_total.add_trace(go.Scatter(x=timeline / 12, y=filtered_networth, mode='lines', name='Total Net Worth'))
+    fig_total.update_layout(
+        title='Total Net Worth Growth Over Time',
+        xaxis_title='Years',
+        yaxis_title='Net Worth',
+        xaxis=dict(range=[0, years])
+    )
+    st.plotly_chart(fig_total)
 
-        # Pot Breakdown Plot
-        fig_breakdown = go.Figure()
-        for name, data in pot_breakdown.items():
-            fig_breakdown.add_trace(go.Scatter(x=timeline / 12, y=data, mode='lines', name=name))
-        fig_breakdown.update_layout(title='Net Worth Breakdown by Pot', xaxis_title='Years', yaxis_title='Net Worth', showlegend=True)
-        st.plotly_chart(fig_breakdown)
+    fig_breakdown = go.Figure()
+    for name, data in filtered_pot_breakdown.items():
+        fig_breakdown.add_trace(go.Scatter(x=timeline / 12, y=data, mode='lines', name=name))
+    fig_breakdown.update_layout(
+        title='Net Worth Breakdown by Pot',
+        xaxis_title='Years',
+        yaxis_title='Net Worth',
+        showlegend=True,
+        xaxis=dict(range=[0, years])
+    )
+    st.plotly_chart(fig_breakdown)
 
-        pot_settings_html = "<h3>Pot Settings</h3>"
-        for pot_item in st.session_state.pots:
+    pot_settings_html = "<h3>Pot Settings</h3>"
+    for pot_item in st.session_state.pots:
+        if pot_item.name in selected_pots:
             pot_settings_html += f"""\
             <h4>{pot_item.name}</h4>
             <ul>
@@ -77,23 +100,27 @@ if st.button('Simulate Net Worth'):
             </ul>
             """
 
-        html_report = f"""\
-        <html>
-            <head><title>Net Worth Simulation Report</title></head>
-            <body>
-                <h1>Net Worth Simulation Report</h1>
-                {pot_settings_html}
-                <h2>Total Net Worth</h2>
-                {fig_total.to_html(full_html=False, include_plotlyjs='cdn')}
-                <h2>Pot Breakdown</h2>
-                {fig_breakdown.to_html(full_html=False, include_plotlyjs='cdn')}
-            </body>
-        </html>
-        """
-        st.download_button(
-            label="Save Report as HTML",
-            data=html_report,
-            file_name="net_worth_report.html",
-            mime="text/html"
-        )
-    
+    html_report = f"""\
+    <html>
+        <head><title>Net Worth Simulation Report</title></head>
+        <body>
+            <h1>Net Worth Simulation Report</h1>
+            <h3>Simulation Settings</h3>
+            <ul>
+                <li>Simulation Period: {years} years</li>
+                <li>Selected Pots: {', '.join(selected_pots)}</li>
+            </ul>
+            {pot_settings_html}
+            <h2>Total Net Worth</h2>
+            {fig_total.to_html(full_html=False, include_plotlyjs='cdn')}
+            <h2>Pot Breakdown</h2>
+            {fig_breakdown.to_html(full_html=False, include_plotlyjs='cdn')}
+        </body>
+    </html>
+    """
+    st.download_button(
+        label="Save Report as HTML",
+        data=html_report,
+        file_name="net_worth_report.html",
+        mime="text/html"
+    )
