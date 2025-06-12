@@ -7,29 +7,73 @@ st.title('Net Worth Simulator')
 
 if 'pots' not in st.session_state:
     st.session_state.pots = []
+    
+if 'contribution_types' not in st.session_state:
+    st.session_state.contribution_types = {}
 
 def add_pot():
     new_pot = Pot(name=f"Pot {len(st.session_state.pots) + 1}")
     st.session_state.pots.append(new_pot)
+    st.session_state.contribution_types[new_pot.name] = "Monthly"
 
 def remove_pot(index):
+    pot_name = st.session_state.pots[index].name
     del st.session_state.pots[index]
+    if pot_name in st.session_state.contribution_types:
+        del st.session_state.contribution_types[pot_name]
     st.rerun()
 
 # Display pot inputs
 for i, pot in enumerate(st.session_state.pots):
-    st.write(f'### {pot.name}')
-    pot.initial = st.number_input(f'Initial Amount ({pot.name})', min_value=0.0, value=float(pot.initial) if pot.initial is not None else 0.0, key=f"initial_{i}_{pot.name}")
-    pot.monthly = st.number_input(f'Monthly Contribution ({pot.name})', min_value=0.0, value=float(pot.monthly) if pot.monthly is not None else 0.0, key=f"monthly_{i}_{pot.name}")
-    pot.rate = st.number_input(f'Annual Return Rate (%) ({pot.name})', min_value=0.0, max_value=100.0, value=float(pot.rate) if pot.rate is not None else 0.0, key=f"rate_{i}_{pot.name}")
-    if st.button(f'Remove {pot.name}', key=f"remove_{i}_{pot.name}"):
-        remove_pot(i)
+    st.write("###", pot.name)
+    input_cols = st.columns([1, 1, 1, 1, 0.2])
+    
+    with input_cols[0]:
+        pot.initial = st.number_input(
+            "Initial Amount",
+            min_value=0.0,
+            value=float(pot.initial) if pot.initial is not None else 0.0,
+            key=f"initial_{i}_{pot.name}"
+        )
+    
+    with input_cols[1]:
+        contribution_type = st.selectbox(
+            "Contribution Type",
+            options=["Monthly", "Yearly"],
+            index=0 if st.session_state.contribution_types.get(pot.name, "Monthly") == "Monthly" else 1,
+            key=f"contribution_type_{i}_{pot.name}"
+        )
+        st.session_state.contribution_types[pot.name] = contribution_type
+    
+    with input_cols[2]:
+        contribution_label = "Monthly" if contribution_type == "Monthly" else "Yearly"
+        pot.monthly = st.number_input(
+            f"{contribution_label} Contribution",
+            min_value=0.0,
+            value=float(pot.monthly) if pot.monthly is not None else 0.0,
+            key=f"contribution_{i}_{pot.name}"
+        )
+    
+    with input_cols[3]:
+        pot.rate = st.number_input(
+            "Annual Return Rate (%)",
+            min_value=0.0,
+            max_value=100.0,
+            value=float(pot.rate) if pot.rate is not None else 0.0,
+            key=f"rate_{i}_{pot.name}"
+        )
+    
+    with input_cols[4]:
+        st.write("")  # Add some spacing
+        st.write("")  # Add some spacing
+        if st.button("🗑️", key=f"remove_{i}_{pot.name}", help=f"Remove {pot.name}"):
+            remove_pot(i)
+    
+    st.divider()
 
-st.divider()
 col1, col2, col3 = st.columns([1, 1, 1])
 with col2:
     st.button('Add Pot', on_click=add_pot, use_container_width=True)
-st.divider()
 
 def simulate_net_worth(years=30):
     months = years * 12
@@ -38,14 +82,17 @@ def simulate_net_worth(years=30):
     pot_breakdown = {}
     for pot_item in st.session_state.pots:
         initial = pot_item.initial if pot_item.initial is not None else 0.0
-        monthly = pot_item.monthly if pot_item.monthly is not None else 0.0
+        contribution = pot_item.monthly if pot_item.monthly is not None else 0.0
+        # Convert yearly contribution to monthly if needed
+        if st.session_state.contribution_types.get(pot_item.name) == "Yearly":
+            contribution = contribution / 12
         rate = (pot_item.rate / 100) if pot_item.rate is not None else 0.0
         
         growth = initial * ((1 + rate / 12) ** timeline)
         if rate == 0:
-            contributions = monthly * timeline
+            contributions = contribution * timeline
         else:
-            contributions = monthly * (((1 + rate / 12) ** timeline - 1) / (rate / 12))
+            contributions = contribution * (((1 + rate / 12) ** timeline - 1) / (rate / 12))
         networth_for_pot = growth + contributions
         total_networth += networth_for_pot
         pot_breakdown[pot_item.name] = networth_for_pot
