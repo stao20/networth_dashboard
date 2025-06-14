@@ -125,27 +125,53 @@ if not account_data.empty:
 else:
     st.info("No data to display. Add some records!")
 
-# Add pie chart of latest category values
+# Distribution Analysis
 if not account_data.empty:
-    st.header("Category Distribution")
-    # Get most recent date
-    latest_date = account_data['date'].max()
-    latest_data = account_data[account_data['date'] == latest_date]
+    st.header("Distribution Analysis")
     
-    # Calculate category totals
-    category_totals = {}
-    for category, acc_list in accounts.items():
-        category_total = latest_data[latest_data['account'].isin(acc_list)]['value'].sum()
-        if category_total != 0:  # Only include non-zero categories
-            category_totals[category] = category_total
+    # Date selector for distribution analysis
+    available_dates = sorted(account_data['date'].unique(), reverse=True)
+    selected_date = st.selectbox("Select Date for Distribution Analysis", available_dates)
     
-    if category_totals:
-        fig_pie = px.pie(
-            values=list(category_totals.values()),
-            names=list(category_totals.keys()),
-            title=f"Category Distribution as of {latest_date}"
-        )
-        st.plotly_chart(fig_pie)
-    else:
-        st.info("No category data available for pie chart.")
+    # Get data for selected date
+    selected_date_data = account_data[account_data['date'] == selected_date]
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("Category Distribution")
+        # Calculate category totals
+        category_totals = {}
+        for category, acc_list in accounts.items():
+            category_total = selected_date_data[selected_date_data['account'].isin(acc_list)]['value'].sum()
+            if category_total != 0:  # Only include non-zero categories
+                category_totals[category] = category_total
+        
+        if category_totals:
+            fig_category_pie = px.pie(
+                values=list(category_totals.values()),
+                names=list(category_totals.keys()),
+                title=f"Category Distribution as of {selected_date}"
+            )
+            st.plotly_chart(fig_category_pie)
+        else:
+            st.info("No category data available for the selected date.")
+    
+    with col2:
+        st.subheader("Account Distribution")
+        # Get account totals
+        account_totals = selected_date_data.groupby('account')['value'].sum()
+        account_totals = account_totals[account_totals != 0]  # Filter out zero values
+        
+        if not account_totals.empty:
+            fig_account_pie = px.pie(
+                values=account_totals.values,
+                names=account_totals.index,
+                title=f"Account Distribution as of {selected_date}"
+            )
+            st.plotly_chart(fig_account_pie)
+        else:
+            st.info("No account data available for the selected date.")
+else:
+    st.info("No data to display. Add some records!")
 
