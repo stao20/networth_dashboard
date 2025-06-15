@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 import logging
 import os
+import streamlit as st
 
 import pandas as pd
 import sqlite3
@@ -72,8 +73,8 @@ class SQLiteHandler(DatabaseHandler):
 class SupabaseHandler(DatabaseHandler):
     def __init__(self):
         """Initialize Supabase client"""
-        supabase_url = os.getenv("SUPABASE_URL")
-        supabase_key = os.getenv("SUPABASE_KEY")
+        supabase_url = st.secrets["supabase"]["url"]
+        supabase_key = st.secrets["supabase"]["key"]
         self.supabase = create_client(supabase_url, supabase_key)
 
     def get_or_create_user(self, google_id: str, email: str, name: str) -> dict:
@@ -188,19 +189,38 @@ class SupabaseHandler(DatabaseHandler):
     def load_account_data(self, user_id: str) -> pd.DataFrame:
         """Load all account values with account and category names"""
         try:
-            response = self.supabase.table("account_values").select(
-                "account_values.id",
-                "account_values.date",
-                "account_values.value",
-                "accounts.name:account_name",
-                "accounts.id:account_id",
-                "categories.name:category_name"
-            ).eq("accounts.user_id", user_id).execute()
+            response = self.supabase.table("account_values") \
+                .select(
+                    "*, accounts!inner(id, name, categories(id, name))"
+                ) \
+                .eq("accounts.user_id", user_id) \
+                .order("date", desc=True) \
+                .execute()
             
             if not response.data:
                 return pd.DataFrame()
             
-            return pd.DataFrame(response.data)
+            # Process the nested response into a flat DataFrame
+            processed_data = []
+            for record in response.data:
+                account = record["accounts"]
+                category = account["categories"]
+                processed_data.append({
+                    "id": record["id"],
+                    "date": record["date"],
+                    "value": record["value"],
+                    "account_id": account["id"],
+                    "account_name": account["name"],
+                    "category_id": category["id"],
+                    "category_name": category["name"]
+                })
+            
+            df = pd.DataFrame(processed_data)
+            # Convert date strings to datetime
+            df["date"] = pd.to_datetime(df["date"]).dt.date
+            # Ensure value is numeric
+            df["value"] = pd.to_numeric(df["value"])
+            return df
         except Exception as e:
             logging.error(f"Error in load_account_data: {str(e)}")
             return pd.DataFrame()
