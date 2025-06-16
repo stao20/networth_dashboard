@@ -245,15 +245,19 @@ class SupabaseHandler(DatabaseHandler):
             return pd.DataFrame()
 
     def save_account_value(self, account_id: str, date: str, value: float) -> dict:
-        """Save an account value"""
+        """Save or update an account value"""
         try:
-            response = self.supabase.table("account_values").insert({
-                "account_id": account_id,
-                "date": date,
-                "value": value
-            }, returning='minimal').execute()
+            response = self.supabase.table("account_values").upsert(
+                {
+                    "account_id": account_id,
+                    "date": date,
+                    "value": value
+                },
+                on_conflict="account_id,date",
+                returning='minimal'
+            ).execute()
             
-            # Fetch the value after creation
+            # Fetch the value after creation/update
             response = self.supabase.table("account_values").select("*").eq("account_id", account_id).eq("date", date).execute()
             return response.data[0]
         except Exception as e:
