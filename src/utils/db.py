@@ -153,12 +153,13 @@ class SupabaseHandler(DatabaseHandler):
         try:
             response = self.supabase.table("accounts") \
                 .select(
-                    "name, categories!inner(name)"
+                    "id, name, categories!inner(name)"
                 ) \
                 .eq("user_id", user_id) \
                 .execute()
             
             return [{
+                "id": acc["id"],
                 "name": acc["name"],
                 "category_name": acc["categories"]["name"]
             } for acc in response.data]
