@@ -14,11 +14,39 @@ if "categories" not in st.session_state:
     st.session_state.categories = []
 if "accounts" not in st.session_state:
     st.session_state.accounts = []
+if "active_tab" not in st.session_state:
+    st.session_state.active_tab = "Overview"
 
 def load_user_data(user_id: str):
     """Load user's categories and accounts"""
     st.session_state.categories = db_handler.get_user_categories(user_id)
     st.session_state.accounts = db_handler.get_user_accounts(user_id)
+
+# Set page config for a wider layout
+st.set_page_config(layout="wide", page_title="Net Worth Dashboard")
+
+# Custom CSS
+st.markdown("""
+    <style>
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 2px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        padding: 10px 20px;
+        background-color: #f0f2f6;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #4CAF50 !important;
+        color: white !important;
+    }
+    div[data-testid="stToolbar"] {
+        display: none;
+    }
+    .st-emotion-cache-1y4p8pa {
+        max-width: 100%;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 # Authentication
 st.title(
@@ -42,237 +70,321 @@ with st.sidebar:
     if st.button("Logout"):
         auth.logout()
 
-# Category Management
-st.header("Category Management")
-col1, col2 = st.columns(2)
-
-with col1:
-    new_category = st.text_input("New Category Name")
-    if st.button("Add Category"):
-        if new_category:
-            db_handler.create_category(user_id, new_category)
-            load_user_data(user_id)
-            st.success(f"Category '{new_category}' added successfully!")
-
-with col2:
-    if st.session_state.categories:
-        category_to_edit = st.selectbox(
-            "Select Category to Edit/Delete",
-            options=[cat["name"] for cat in st.session_state.categories],
-            key="category_select"
-        )
-        selected_category = next(cat for cat in st.session_state.categories if cat["name"] == category_to_edit)
-        
-        new_name = st.text_input("New Category Name", value=category_to_edit)
-        col3, col4 = st.columns(2)
-        
-        with col3:
-            if st.button("Update Category"):
-                db_handler.update_category(selected_category["id"], new_name)
-                load_user_data(user_id)
-                st.success(f"Category updated to '{new_name}'!")
-        
-        with col4:
-            if st.button("Delete Category"):
-                db_handler.delete_category(selected_category["id"])
-                load_user_data(user_id)
-                st.success(f"Category '{category_to_edit}' deleted!")
-
-# Account Management
-st.header("Account Management")
-col5, col6 = st.columns(2)
-
-with col5:
-    if st.session_state.categories:
-        new_account_category = st.selectbox(
-            "Select Category",
-            options=[cat["name"] for cat in st.session_state.categories],
-            key="new_account_category"
-        )
-        selected_category = next(cat for cat in st.session_state.categories if cat["name"] == new_account_category)
-        
-        new_account_name = st.text_input("New Account Name")
-        if st.button("Add Account"):
-            if new_account_name:
-                db_handler.create_account(user_id, selected_category["id"], new_account_name)
-                load_user_data(user_id)
-                st.success(f"Account '{new_account_name}' added successfully!")
-
-with col6:
-    if st.session_state.accounts:
-        account_to_edit = st.selectbox(
-            "Select Account to Edit/Delete",
-            options=[acc["name"] for acc in st.session_state.accounts],
-            key="account_select"
-        )
-        selected_account = next(acc for acc in st.session_state.accounts if acc["name"] == account_to_edit)
-        
-        new_account_name = st.text_input("New Account Name", value=account_to_edit)
-        col7, col8 = st.columns(2)
-        
-        with col7:
-            if st.button("Update Account"):
-                db_handler.update_account(selected_account["id"], new_account_name)
-                load_user_data(user_id)
-                st.success(f"Account updated to '{new_account_name}'!")
-        
-        with col8:
-            if st.button("Delete Account"):
-                db_handler.delete_account(selected_account["id"])
-                load_user_data(user_id)
-                st.success(f"Account '{account_to_edit}' deleted!")
-
-# Account Value Entry Form
-st.header("Account Values")
-date = st.date_input("Date")
-
-if st.session_state.accounts:
-    account = st.selectbox(
-        "Select Account",
-        options=[acc["name"] for acc in st.session_state.accounts]
-    )
-    selected_account = next(acc for acc in st.session_state.accounts if acc["name"] == account)
-    
-account_value = st.number_input("Account Value", step=100.0)
-
-if st.button("Add/Update Account Value"):
-    db_handler.save_account_value(selected_account["id"], date.strftime("%Y-%m-%d"), account_value)
-    st.success(f"Account {account} value for {date} saved successfully!")
-
-# Remove Entries by Date
-st.header("Remove Entries")
-delete_date = st.date_input("Date to Remove")
-if st.button("Remove All Entries for Date"):
-    db_handler.delete_entries_by_date(delete_date.strftime("%Y-%m-%d"), user_id)
-    st.success(f"All entries for {delete_date} have been removed.")
-
-# Display Account Data
-st.header("Account Value Records")
+# Load account data before creating tabs
 account_data = db_handler.load_account_data(user_id)
 
-if not account_data.empty:
-    net_worth_df = account_data.groupby("date")["value"].sum().reset_index()
-    net_worth_df.columns = ["date", "net_worth"]
-    
-    edited_df = st.data_editor(
-        account_data,
-        num_rows="dynamic",
-        column_config={
-            "value": st.column_config.NumberColumn(
-                "Value",
-                help="Edit the account value",
-                min_value=0,
-                format="%.2f",
-                step=100
-            ),
-            "date": st.column_config.DateColumn(
-                "Date",
-                help="Date of the entry"
-            ),
-            "account_name": st.column_config.TextColumn(
-                "Account",
-                help="Account name"
-            ),
-            "category_name": st.column_config.TextColumn(
-                "Category",
-                help="Category name"
-            )
-        },
-        disabled=["date", "account_name", "category_name"],
-        hide_index=True
-    )
-    
-    # Check for changes and update the database
-    if not edited_df.equals(account_data):
-        for index, row in edited_df.iterrows():
-            if row["value"] != account_data.loc[index, "value"]:
-                db_handler.update_account_value(
-                    account_name=row["account_name"],
-                    date=row["date"].strftime("%Y-%m-%d"),
-                    value=row["value"]
-                )
-        st.success("Updated the database with changes.")
-    
-    st.header("Net Worth Summary")
-    st.dataframe(net_worth_df)
-else:
-    st.info("No account data to display. Add some records!")
+# Main navigation tabs
+tabs = st.tabs([
+    "📊 Overview",
+    "🗂️ Categories & Accounts",
+    "💰 Account Values",
+    "📈 Analytics"
+])
 
-# Plotting Line Charts
-st.header("Net Worth Over Time")
-if not account_data.empty:
-    net_worth_df["date"] = pd.to_datetime(net_worth_df["date"])
-    fig_networth = px.line(
-        net_worth_df, x="date", y="net_worth", title="Net Worth Over Time", markers=True
-    )
-    st.plotly_chart(fig_networth)
-
-    # Combined category plot
-    fig_category = px.line(title="Category Trends Over Time")
-    for category in st.session_state.categories:
-        category_name = category["name"]
-        # Get accounts for this category using names
-        category_accounts = [acc["name"] for acc in st.session_state.accounts if acc["category_name"] == category_name]
+# Overview Tab
+with tabs[0]:
+    if not account_data.empty:
+        # Summary metrics
+        col1, col2, col3 = st.columns(3)
+        latest_date = account_data["date"].max()
+        latest_total = account_data[account_data["date"] == latest_date]["value"].sum()
         
-        if category_accounts:
-            # Filter account data for this category
-            category_df = account_data[account_data["account_name"].isin(category_accounts)]
-            
-            if not category_df.empty:
-                # Sum values by date for this category
-                category_df = category_df.groupby("date")["value"].sum().reset_index()
-                category_df["date"] = pd.to_datetime(category_df["date"])
-                
-                # Add line to plot
-                fig_category.add_scatter(
-                    x=category_df["date"],
-                    y=category_df["value"],
-                    mode="lines+markers",
-                    name=category_name,
-                )
-    
-    st.plotly_chart(fig_category)
-else:
-    st.info("No data to display. Add some records!")
-
-# Distribution Analysis
-if not account_data.empty:
-    st.header("Distribution Analysis")
-    
-    # Date selector for distribution analysis
-    available_dates = sorted(account_data["date"].unique(), reverse=True)
-    selected_date = st.selectbox("Select Date for Distribution Analysis", available_dates)
-    
-    # Get data for selected date
-    selected_date_data = account_data[account_data["date"] == selected_date]
-    
-    col9, col10 = st.columns(2)
-    
-    with col9:
-        st.subheader("Category Distribution")
-        category_totals = selected_date_data.groupby("category_name")["value"].sum()
-        if not category_totals.empty:
-            fig_category_pie = px.pie(
-                values=category_totals.values,
-                names=category_totals.index,
-                title=f"Category Distribution as of {selected_date}"
-        )
-            st.plotly_chart(fig_category_pie)
-        else:
-            st.info("No category data available for the selected date.")
-    
-    with col10:
-        st.subheader("Account Distribution")
-        account_totals = selected_date_data.groupby("account_name")["value"].sum()
-        if not account_totals.empty:
-            fig_account_pie = px.pie(
-                values=account_totals.values,
-                names=account_totals.index,
-                title=f"Account Distribution as of {selected_date}"
+        with col1:
+            st.metric(
+                "Current Net Worth",
+                f"£{latest_total:,.2f}",
+                delta=None
             )
-            st.plotly_chart(fig_account_pie)
-        else:
-            st.info("No account data available for the selected date.")
-else:
-    st.info("No data to display. Add some records!")
+        
+        with col2:
+            num_accounts = len(st.session_state.accounts)
+            st.metric("Total Accounts", num_accounts)
+        
+        with col3:
+            num_categories = len(st.session_state.categories)
+            st.metric("Total Categories", num_categories)
+        
+        # Net Worth Chart
+        st.subheader("Net Worth Trend")
+        net_worth_df = account_data.groupby("date")["value"].sum().reset_index()
+        net_worth_df.columns = ["date", "net_worth"]
+        net_worth_df["date"] = pd.to_datetime(net_worth_df["date"])
+        
+        fig_networth = px.line(
+            net_worth_df,
+            x="date",
+            y="net_worth",
+            title="Net Worth Over Time",
+            markers=True
+        )
+        fig_networth.update_layout(
+            xaxis_title="Date",
+            yaxis_title="Net Worth (£)",
+            hovermode="x unified"
+        )
+        st.plotly_chart(fig_networth, use_container_width=True)
+        
+        # Distribution Analysis
+        st.subheader("Current Distribution")
+        latest_data = account_data[account_data["date"] == latest_date]
+        
+        col4, col5 = st.columns(2)
+        with col4:
+            category_totals = latest_data.groupby("category_name")["value"].sum()
+            if not category_totals.empty:
+                fig_category_pie = px.pie(
+                    values=category_totals.values,
+                    names=category_totals.index,
+                    title="Category Distribution"
+                )
+                st.plotly_chart(fig_category_pie, use_container_width=True)
+        
+        with col5:
+            account_totals = latest_data.groupby("account_name")["value"].sum()
+            if not account_totals.empty:
+                fig_account_pie = px.pie(
+                    values=account_totals.values,
+                    names=account_totals.index,
+                    title="Account Distribution"
+                )
+                st.plotly_chart(fig_account_pie, use_container_width=True)
+    else:
+        st.info("No data available yet. Start by adding some accounts and their values!")
+
+# Categories & Accounts Tab
+with tabs[1]:
+    st.subheader("Category Management")
+    cat_col1, cat_col2 = st.columns(2)
+    
+    with cat_col1:
+        with st.form("add_category_form"):
+            new_category = st.text_input("New Category Name")
+            submit_category = st.form_submit_button("Add Category")
+            if submit_category and new_category:
+                db_handler.create_category(user_id, new_category)
+                load_user_data(user_id)
+                st.success(f"Category '{new_category}' added successfully!")
+    
+    with cat_col2:
+        if st.session_state.categories:
+            with st.form("edit_category_form"):
+                category_to_edit = st.selectbox(
+                    "Select Category to Edit/Delete",
+                    options=[cat["name"] for cat in st.session_state.categories],
+                    key="category_select"
+                )
+                selected_category = next(cat for cat in st.session_state.categories if cat["name"] == category_to_edit)
+                new_name = st.text_input("New Category Name", value=category_to_edit)
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    update_cat = st.form_submit_button("Update Category")
+                with col2:
+                    delete_cat = st.form_submit_button("Delete Category", type="secondary")
+                
+                if update_cat:
+                    db_handler.update_category(selected_category["id"], new_name)
+                    load_user_data(user_id)
+                    st.success(f"Category updated to '{new_name}'!")
+                elif delete_cat:
+                    db_handler.delete_category(selected_category["id"])
+                    load_user_data(user_id)
+                    st.success(f"Category '{category_to_edit}' deleted!")
+    
+    st.divider()
+    
+    st.subheader("Account Management")
+    acc_col1, acc_col2 = st.columns(2)
+    
+    with acc_col1:
+        if st.session_state.categories:
+            with st.form("add_account_form"):
+                new_account_category = st.selectbox(
+                    "Select Category",
+                    options=[cat["name"] for cat in st.session_state.categories],
+                    key="new_account_category"
+                )
+                selected_category = next(cat for cat in st.session_state.categories if cat["name"] == new_account_category)
+                new_account_name = st.text_input("New Account Name")
+                submit_account = st.form_submit_button("Add Account")
+                
+                if submit_account and new_account_name:
+                    db_handler.create_account(user_id, selected_category["id"], new_account_name)
+                    load_user_data(user_id)
+                    st.success(f"Account '{new_account_name}' added successfully!")
+    
+    with acc_col2:
+        if st.session_state.accounts:
+            with st.form("edit_account_form"):
+                account_to_edit = st.selectbox(
+                    "Select Account to Edit/Delete",
+                    options=[acc["name"] for acc in st.session_state.accounts],
+                    key="account_select"
+                )
+                selected_account = next(acc for acc in st.session_state.accounts if acc["name"] == account_to_edit)
+                new_account_name = st.text_input("New Account Name", value=account_to_edit)
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    update_acc = st.form_submit_button("Update Account")
+                with col2:
+                    delete_acc = st.form_submit_button("Delete Account", type="secondary")
+                
+                if update_acc:
+                    db_handler.update_account(selected_account["id"], new_account_name)
+                    load_user_data(user_id)
+                    st.success(f"Account updated to '{new_account_name}'!")
+                elif delete_acc:
+                    db_handler.delete_account(selected_account["id"])
+                    load_user_data(user_id)
+                    st.success(f"Account '{account_to_edit}' deleted!")
+
+# Account Values Tab
+with tabs[2]:
+    st.subheader("Add/Update Account Values")
+    with st.form("account_value_form"):
+        val_col1, val_col2, val_col3 = st.columns(3)
+        
+        with val_col1:
+            date = st.date_input("Date")
+        
+        with val_col2:
+            if st.session_state.accounts:
+                account = st.selectbox(
+                    "Select Account",
+                    options=[acc["name"] for acc in st.session_state.accounts]
+                )
+                selected_account = next(acc for acc in st.session_state.accounts if acc["name"] == account)
+        
+        with val_col3:
+            account_value = st.number_input("Account Value", step=100.0)
+        
+        submit_value = st.form_submit_button("Add/Update Account Value")
+        if submit_value:
+            db_handler.save_account_value(selected_account["id"], date.strftime("%Y-%m-%d"), account_value)
+            st.success(f"Account {account} value for {date} saved successfully!")
+    
+    st.divider()
+    
+    # Remove Entries Section
+    st.subheader("Remove Entries")
+    with st.form("remove_entries_form"):
+        delete_date = st.date_input("Select Date to Remove")
+        submit_delete = st.form_submit_button("Remove All Entries for Date")
+        if submit_delete:
+            db_handler.delete_entries_by_date(delete_date.strftime("%Y-%m-%d"), user_id)
+            st.success(f"All entries for {delete_date} have been removed.")
+    
+    st.divider()
+    
+    # Account Value Records
+    st.subheader("Account Value Records")
+    account_data = db_handler.load_account_data(user_id)
+    
+    if not account_data.empty:
+        edited_df = st.data_editor(
+            account_data,
+            num_rows="dynamic",
+            column_config={
+                "value": st.column_config.NumberColumn(
+                    "Value",
+                    help="Edit the account value",
+                    min_value=0,
+                    format="%.2f",
+                    step=100
+                ),
+                "date": st.column_config.DateColumn(
+                    "Date",
+                    help="Date of the entry"
+                ),
+                "account_name": st.column_config.TextColumn(
+                    "Account",
+                    help="Account name"
+                ),
+                "category_name": st.column_config.TextColumn(
+                    "Category",
+                    help="Category name"
+                )
+            },
+            disabled=["date", "account_name", "category_name"],
+            hide_index=True
+        )
+        
+        if not edited_df.equals(account_data):
+            for index, row in edited_df.iterrows():
+                if row["value"] != account_data.loc[index, "value"]:
+                    db_handler.update_account_value(
+                        account_name=row["account_name"],
+                        date=row["date"].strftime("%Y-%m-%d"),
+                        value=row["value"]
+                    )
+            st.success("Updated the database with changes.")
+    else:
+        st.info("No account data to display. Add some records!")
+
+# Analytics Tab
+with tabs[3]:
+    if not account_data.empty:
+        # Category Trends
+        st.subheader("Category Trends")
+        fig_category = px.line(title="Category Trends Over Time")
+        for category in st.session_state.categories:
+            category_name = category["name"]
+            category_accounts = [acc["name"] for acc in st.session_state.accounts if acc["category_name"] == category_name]
+            
+            if category_accounts:
+                category_df = account_data[account_data["account_name"].isin(category_accounts)]
+                
+                if not category_df.empty:
+                    category_df = category_df.groupby("date")["value"].sum().reset_index()
+                    category_df["date"] = pd.to_datetime(category_df["date"])
+                    
+                    fig_category.add_scatter(
+                        x=category_df["date"],
+                        y=category_df["value"],
+                        mode="lines+markers",
+                        name=category_name,
+                    )
+        
+        fig_category.update_layout(
+            xaxis_title="Date",
+            yaxis_title="Value (£)",
+            hovermode="x unified"
+        )
+        st.plotly_chart(fig_category, use_container_width=True)
+        
+        # Historical Distribution Analysis
+        st.subheader("Historical Distribution Analysis")
+        available_dates = sorted(account_data["date"].unique(), reverse=True)
+        selected_date = st.selectbox("Select Date for Distribution Analysis", available_dates)
+        
+        selected_date_data = account_data[account_data["date"] == selected_date]
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            category_totals = selected_date_data.groupby("category_name")["value"].sum()
+            if not category_totals.empty:
+                fig_category_pie = px.pie(
+                    values=category_totals.values,
+                    names=category_totals.index,
+                    title=f"Category Distribution as of {selected_date}"
+                )
+                st.plotly_chart(fig_category_pie, use_container_width=True)
+            else:
+                st.info("No category data available for the selected date.")
+        
+        with col2:
+            account_totals = selected_date_data.groupby("account_name")["value"].sum()
+            if not account_totals.empty:
+                fig_account_pie = px.pie(
+                    values=account_totals.values,
+                    names=account_totals.index,
+                    title=f"Account Distribution as of {selected_date}"
+                )
+                st.plotly_chart(fig_account_pie, use_container_width=True)
+            else:
+                st.info("No account data available for the selected date.")
+    else:
+        st.info("No data available for analysis. Add some records to see insights!")
 
