@@ -157,15 +157,40 @@ if not account_data.empty:
     edited_df = st.data_editor(
         account_data,
         num_rows="dynamic",
-        column_config={"value": {"editable": True}},
-        disabled=["id", "account_name", "category_name", "date"],
+        column_config={
+            "value": st.column_config.NumberColumn(
+                "Value",
+                help="Edit the account value",
+                min_value=0,
+                format="%.2f",
+                step=100
+            ),
+            "date": st.column_config.DateColumn(
+                "Date",
+                help="Date of the entry"
+            ),
+            "account_name": st.column_config.TextColumn(
+                "Account",
+                help="Account name"
+            ),
+            "category_name": st.column_config.TextColumn(
+                "Category",
+                help="Category name"
+            )
+        },
+        disabled=["date", "account_name", "category_name"],
+        hide_index=True
     )
     
     # Check for changes and update the database
     if not edited_df.equals(account_data):
         for index, row in edited_df.iterrows():
             if row["value"] != account_data.loc[index, "value"]:
-                db_handler.update_account_value(row["id"], row["value"])
+                db_handler.update_account_value(
+                    account_name=row["account_name"],
+                    date=row["date"].strftime("%Y-%m-%d"),
+                    value=row["value"]
+                )
         st.success("Updated the database with changes.")
     
     st.header("Net Worth Summary")
@@ -185,18 +210,27 @@ if not account_data.empty:
     # Combined category plot
     fig_category = px.line(title="Category Trends Over Time")
     for category in st.session_state.categories:
-        category_accounts = [acc["id"] for acc in st.session_state.accounts if acc["category_id"] == category["id"]]
+        category_name = category["name"]
+        # Get accounts for this category using names
+        category_accounts = [acc["name"] for acc in st.session_state.accounts if acc["category_name"] == category_name]
+        
         if category_accounts:
-            category_df = account_data[account_data["account_id"].isin(category_accounts)]
-        if not category_df.empty:
-            category_df = category_df.groupby("date")["value"].sum().reset_index()
-            category_df["date"] = pd.to_datetime(category_df["date"])
-            fig_category.add_scatter(
-                x=category_df["date"],
-                y=category_df["value"],
-                mode="lines+markers",
-                    name=category["name"],
-            )
+            # Filter account data for this category
+            category_df = account_data[account_data["account_name"].isin(category_accounts)]
+            
+            if not category_df.empty:
+                # Sum values by date for this category
+                category_df = category_df.groupby("date")["value"].sum().reset_index()
+                category_df["date"] = pd.to_datetime(category_df["date"])
+                
+                # Add line to plot
+                fig_category.add_scatter(
+                    x=category_df["date"],
+                    y=category_df["value"],
+                    mode="lines+markers",
+                    name=category_name,
+                )
+    
     st.plotly_chart(fig_category)
 else:
     st.info("No data to display. Add some records!")

@@ -111,6 +111,12 @@ class SupabaseHandler(DatabaseHandler):
     def create_category(self, user_id: str, name: str) -> dict:
         """Create a new category"""
         try:
+            # Check if category already exists
+            existing = self.supabase.table("categories").select("*").eq("user_id", user_id).eq("name", name).execute()
+            if existing.data:
+                return existing.data[0]
+
+            # Create new category if not exists
             response = self.supabase.table("categories").insert({
                 "user_id": user_id,
                 "name": name
@@ -145,8 +151,17 @@ class SupabaseHandler(DatabaseHandler):
     def get_user_accounts(self, user_id: str) -> list:
         """Get all accounts for a user"""
         try:
-            response = self.supabase.table("accounts").select("*").eq("user_id", user_id).execute()
-            return response.data
+            response = self.supabase.table("accounts") \
+                .select(
+                    "name, categories!inner(name)"
+                ) \
+                .eq("user_id", user_id) \
+                .execute()
+            
+            return [{
+                "name": acc["name"],
+                "category_name": acc["categories"]["name"]
+            } for acc in response.data]
         except Exception as e:
             logging.error(f"Error in get_user_accounts: {str(e)}")
             return []
@@ -154,6 +169,12 @@ class SupabaseHandler(DatabaseHandler):
     def create_account(self, user_id: str, category_id: str, name: str) -> dict:
         """Create a new account"""
         try:
+            # Check if account already exists
+            existing = self.supabase.table("accounts").select("*").eq("user_id", user_id).eq("name", name).execute()
+            if existing.data:
+                return existing.data[0]
+
+            # Create new account if not exists
             response = self.supabase.table("accounts").insert({
                 "user_id": user_id,
                 "category_id": category_id,
@@ -206,12 +227,9 @@ class SupabaseHandler(DatabaseHandler):
                 account = record["accounts"]
                 category = account["categories"]
                 processed_data.append({
-                    "id": record["id"],
                     "date": record["date"],
                     "value": record["value"],
-                    "account_id": account["id"],
                     "account_name": account["name"],
-                    "category_id": category["id"],
                     "category_name": category["name"]
                 })
             
@@ -241,13 +259,24 @@ class SupabaseHandler(DatabaseHandler):
             logging.error(f"Error in save_account_value: {str(e)}")
             raise
 
-    def update_account_value(self, value_id: str, value: float) -> dict:
-        """Update an account value"""
+    def update_account_value(self, account_name: str, date: str, value: float) -> dict:
+        """Update an account value using account name and date"""
         try:
-            response = self.supabase.table("account_values").update({
-                "value": value
-            }).eq("id", value_id).execute()
-            return response.data[0]
+            # First get the account_id using the account name
+            account_response = self.supabase.table("accounts").select("id").eq("name", account_name).single().execute()
+            if not account_response.data:
+                raise ValueError(f"Account {account_name} not found")
+            
+            account_id = account_response.data["id"]
+            
+            # Then update the value using account_id and date
+            response = self.supabase.table("account_values") \
+                .update({"value": value}) \
+                .eq("account_id", account_id) \
+                .eq("date", date) \
+                .execute()
+            
+            return response.data[0] if response.data else None
         except Exception as e:
             logging.error(f"Error in update_account_value: {str(e)}")
             raise
