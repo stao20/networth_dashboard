@@ -257,12 +257,25 @@ with tabs[2]:
                 selected_account = next(acc for acc in st.session_state.accounts if acc["name"] == account)
         
         with val_col3:
-            account_value = st.number_input("Account Value", step=100.0)
+            account_value = st.number_input(
+                "Account Value",
+                min_value=0.0,
+                max_value=1e12,
+                value=0.0,
+                step=0.01,
+                format="%.2f",
+                help="Enter the account value"
+            )
         
         submit_value = st.form_submit_button("Add/Update Account Value")
         if submit_value:
-            db_handler.save_account_value(selected_account["id"], date.strftime("%Y-%m-%d"), account_value)
-            st.success(f"Account {account} value for {date} saved successfully!")
+            try:
+                db_handler.save_account_value(selected_account["id"], date.strftime("%Y-%m-%d"), account_value)
+                st.success(f"Account {account} value for {date} saved successfully!")
+                # Refresh the page to show the new data
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error saving account value: {str(e)}")
     
     st.divider()
     
@@ -290,8 +303,10 @@ with tabs[2]:
                     "Value",
                     help="Edit the account value",
                     min_value=0,
+                    max_value=1e12,  # Set a reasonable maximum
                     format="%.2f",
-                    step=100
+                    step=0.01,  # Allow finer control
+                    default=0.00
                 ),
                 "date": st.column_config.DateColumn(
                     "Date",
@@ -307,18 +322,27 @@ with tabs[2]:
                 )
             },
             disabled=["date", "account_name", "category_name"],
-            hide_index=True
+            hide_index=True,
+            key="account_values_editor"  # Add a unique key
         )
         
+        # Check for changes and update the database
         if not edited_df.equals(account_data):
-            for index, row in edited_df.iterrows():
-                if row["value"] != account_data.loc[index, "value"]:
-                    db_handler.update_account_value(
-                        account_name=row["account_name"],
-                        date=row["date"].strftime("%Y-%m-%d"),
-                        value=row["value"]
-                    )
-            st.success("Updated the database with changes.")
+            try:
+                for index, row in edited_df.iterrows():
+                    if row["value"] != account_data.loc[index, "value"]:
+                        # Format the value before updating
+                        formatted_value = float(row["value"])
+                        db_handler.update_account_value(
+                            account_name=row["account_name"],
+                            date=row["date"].strftime("%Y-%m-%d"),
+                            value=formatted_value
+                        )
+                st.success("Updated the database with changes.")
+                # Refresh the data
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error updating values: {str(e)}")
     else:
         st.info("No account data to display. Add some records!")
 

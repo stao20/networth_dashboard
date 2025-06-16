@@ -247,11 +247,14 @@ class SupabaseHandler(DatabaseHandler):
     def save_account_value(self, account_id: str, date: str, value: float) -> dict:
         """Save or update an account value"""
         try:
+            # Format the value as a string with 2 decimal places
+            formatted_value = "{:.2f}".format(value)
+            
             response = self.supabase.table("account_values").upsert(
                 {
                     "account_id": account_id,
                     "date": date,
-                    "value": value
+                    "value": formatted_value
                 },
                 on_conflict="account_id,date",
                 returning='minimal'
@@ -274,9 +277,12 @@ class SupabaseHandler(DatabaseHandler):
             
             account_id = account_response.data["id"]
             
+            # Format the value as a string with 2 decimal places
+            formatted_value = "{:.2f}".format(value)
+            
             # Then update the value using account_id and date
             response = self.supabase.table("account_values") \
-                .update({"value": value}) \
+                .update({"value": formatted_value}) \
                 .eq("account_id", account_id) \
                 .eq("date", date) \
                 .execute()
