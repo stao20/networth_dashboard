@@ -1,5 +1,6 @@
 import streamlit as st
 import plotly.graph_objects as go
+import pandas as pd
 
 st.set_page_config(page_title="Company Property Investing Tool", layout="wide")
 st.title("🏢 Company Property Investment Profitability Evaluator")
@@ -81,11 +82,12 @@ with main1:
         max_annual_cash_flow = None
 with main2:
     st.subheader("Key Cost Assumptions")
-    management_fee_percent = st.number_input("Management Fee (% of rent)", min_value=0.0, max_value=20.0, value=10.0, step=0.5)
+    management_fee_percent = st.number_input("Management Fee (% of rent)", min_value=0.0, max_value=20.0, value=2.0, step=0.5)
     maintenance_method = st.selectbox("Maintenance Provision", ["10% of rental income", "1% of property value"])
     void_days = st.number_input("Void Period (days/year)", min_value=0, max_value=365, value=21, step=1)
     mortgage_interest_rate = st.number_input("Mortgage Interest Rate (%)", min_value=0.0, max_value=15.0, value=4.5, step=0.05)
     mortgage_term_years = st.number_input("Mortgage Term (years)", min_value=1, max_value=40, value=25, step=1)
+    property_appreciation_rate = st.number_input("Property Value Appreciation (%/year)", min_value=0.0, max_value=20.0, value=0.0, step=0.1, help="Annual percentage increase in property value")
 
 # --- ACQUISITION & PROPERTY COSTS ---
 st.header("2. Acquisition & Property Costs")
@@ -94,7 +96,7 @@ with acq1:
     legal_fees = st.number_input("Legal Fees (£)", min_value=0.0, value=2000.0, step=100.0)
     mortgage_product_fee = st.number_input("Mortgage Product Fee (£)", min_value=0.0, value=0.0, step=100.0)
     survey_costs = st.number_input("Survey Costs (£)", min_value=0.0, value=300.0, step=50.0)
-    broker_fee_percent = st.number_input("Broker Fee (% of loan)", min_value=0.0, max_value=5.0, value=0.0, step=0.05)
+    broker_fee_percent = st.number_input("Broker Fee (% of loan)", min_value=0.0, max_value=5.0, value=1.0, step=0.05, help="Broker fee as a percentage of the mortgage loan amount. This affects both upfront costs and fair price calculations.")
 with acq2:
     service_charge = st.number_input("Service Charge (£/yr)", min_value=0.0, step=50.0)
     ground_rent = st.number_input("Ground Rent (£/yr)", min_value=0.0, step=10.0)
@@ -339,6 +341,102 @@ def find_fair_price(target_metric, target_value, rent, tol=0.01, max_iter=50, ma
     
     return mid, computed_value
 
+def calculate_remaining_mortgage_balance(original_loan, annual_rate, years_remaining, total_years):
+    """Calculate remaining mortgage balance after a certain number of years."""
+    if annual_rate == 0 or total_years == 0:
+        return original_loan * (years_remaining / total_years) if total_years else 0
+    
+    # Calculate monthly payment
+    r = annual_rate / 100 / 12
+    n = total_years * 12
+    monthly_payment = original_loan * (r * (1 + r) ** n) / ((1 + r) ** n - 1)
+    
+    # Calculate remaining balance after years_remaining
+    months_remaining = years_remaining * 12
+    if months_remaining <= 0:
+        return 0
+    
+    remaining_balance = monthly_payment * ((1 - (1 + r) ** (-months_remaining)) / r)
+    return remaining_balance
+
+def calculate_equity_and_return_analysis(property_price, loan_amount, mortgage_rate, mortgage_term, appreciation_rate, total_acquisition_cost):
+    """Calculate equity and return analysis over the mortgage term."""
+    years = []
+    property_values = []
+    remaining_mortgages = []
+    equities = []
+    returns = []
+    cumulative_rental_income = []
+    cumulative_costs = []
+    net_returns = []
+    
+    # Calculate annual rental income and costs (simplified for this analysis)
+    annual_rent_income = monthly_rent * 12
+    
+    # Calculate annual operating costs (simplified)
+    if maintenance_method == "1% of property value":
+        maintenance = property_price * 0.01
+    else:
+        maintenance = monthly_rent * 12 * 0.10
+    
+    management_fees = monthly_rent * 12 * (management_fee_percent / 100)
+    annual_operating_costs = (
+        service_charge + ground_rent + council_tax + insurance +
+        management_fees + maintenance + gas_safety + electrical_inspection / 5 + 
+        epc_certificate / 10 + (void_days / 365) * (monthly_rent * 12)
+    )
+    
+    # Calculate annual mortgage payment
+    annual_mortgage_payment = mortgage_annual_payment(loan_amount, mortgage_rate, mortgage_term)
+    
+    cumulative_rental = 0
+    cumulative_cost = 0
+    
+    for year in range(mortgage_term + 1):
+        # Calculate property value with appreciation
+        current_property_value = property_price * ((1 + appreciation_rate / 100) ** year)
+        
+        # Calculate remaining mortgage balance
+        years_remaining = max(0, mortgage_term - year)
+        remaining_mortgage = calculate_remaining_mortgage_balance(loan_amount, mortgage_rate, years_remaining, mortgage_term)
+        
+        # Calculate equity
+        equity = current_property_value - remaining_mortgage
+        
+        # Calculate return based on equity vs initial investment
+        return_percentage = ((equity - total_acquisition_cost) / total_acquisition_cost) * 100 if total_acquisition_cost > 0 else 0
+        
+        # Track cumulative rental income and costs
+        if year > 0:  # Start accumulating from year 1
+            cumulative_rental += annual_rent_income
+            # Only subtract interest portion of mortgage payment, not principal (principal increases equity)
+            annual_interest = annual_mortgage_payment / 2  # Simplified: half interest, half principal
+            cumulative_cost += annual_operating_costs + annual_interest
+        
+        # Calculate net return (equity + cumulative rental income - cumulative costs - initial investment)
+        net_return = equity + cumulative_rental - cumulative_cost - total_acquisition_cost
+        net_return_percentage = (net_return / total_acquisition_cost) * 100 if total_acquisition_cost > 0 else 0
+        
+        years.append(year)
+        property_values.append(current_property_value)
+        remaining_mortgages.append(remaining_mortgage)
+        equities.append(equity)
+        returns.append(return_percentage)
+        cumulative_rental_income.append(cumulative_rental)
+        cumulative_costs.append(cumulative_cost)
+        net_returns.append(net_return_percentage)
+    
+    return {
+        'years': years,
+        'property_values': property_values,
+        'remaining_mortgages': remaining_mortgages,
+        'equities': equities,
+        'returns': returns,
+        'cumulative_rental_income': cumulative_rental_income,
+        'cumulative_costs': cumulative_costs,
+        'net_returns': net_returns
+    }
+
 # Check rent vs mortgage constraint after functions are defined
 annual_rent = monthly_rent * 12
 # Calculate mortgage payment for constraint check (using a reasonable property price estimate)
@@ -446,6 +544,11 @@ with res1:
         f"£{fair_price:,.0f}",
         help=f"The maximum property price you should pay to achieve your target {target_metric.lower()} ({target_yield if target_metric == 'Net Rental Yield' else target_cash_to_cash_return:.2f}%), given your rent and all cost assumptions."
     )
+    
+    # Show broker fee impact if it's non-zero
+    if broker_fee_percent > 0:
+        broker_fee_amount = loan_amount * (broker_fee_percent / 100)
+        st.info(f"💰 **Broker Fee Impact**: £{broker_fee_amount:,.0f} (£{broker_fee_percent:.2f}% of £{loan_amount:,.0f} loan) included in upfront costs")
     
     # Show constraint satisfaction status
     if fair_price > 0:
@@ -607,5 +710,320 @@ with st.expander("Show Calculation Details"):
     st.write(f"**Break-even Occupancy:** {break_even_occupancy:.1f}%")
     st.write(f"**Net Rental Yield:** {net_rental_yield:.2f}%")
     st.write(f"**Cash-on-Cash Return:** {cash_on_cash_return:.2f}%")
+    
+    # Broker fee impact explanation
+    if broker_fee_percent > 0:
+        st.subheader("💰 Broker Fee Impact on Returns")
+        broker_fee_amount = loan_amount * (broker_fee_percent / 100)
+        st.write(f"**Broker Fee Amount:** £{broker_fee_amount:,.2f} (£{broker_fee_percent:.2f}% of £{loan_amount:,.0f} loan)")
+        st.write(f"**Total Upfront Investment:** £{total_acquisition:,.2f} (includes broker fee)")
+        st.write(f"**Cash-on-Cash Return Impact:** Higher broker fees reduce cash-on-cash return by increasing the denominator (total upfront investment)")
+
+# --- PROPERTY APPRECIATION & RETURN ANALYSIS ---
+if property_price > 0 and property_appreciation_rate >= 0:
+    st.header("4. Property Appreciation & Return Analysis")
+    
+    # Calculate the analysis
+    analysis_data = calculate_equity_and_return_analysis(
+        property_price, loan_amount, mortgage_interest_rate, mortgage_term_years, 
+        property_appreciation_rate, total_acquisition
+    )
+    
+    # Display key metrics
+    final_year = mortgage_term_years
+    final_equity = analysis_data['equities'][-1]
+    final_property_value = analysis_data['property_values'][-1]
+    final_return = analysis_data['net_returns'][-1]
+    
+    st.subheader("📈 Key Return Metrics")
+    return_col1, return_col2, return_col3, return_col4 = st.columns(4)
+    
+    with return_col1:
+        st.metric(
+            f"Property Value After {final_year} Years",
+            f"£{final_property_value:,.0f}",
+            delta=f"£{final_property_value - property_price:,.0f}",
+            delta_color="normal",
+            help=f"Property value after {final_year} years with {property_appreciation_rate}% annual appreciation"
+        )
+    
+    with return_col2:
+        st.metric(
+            f"Equity After {final_year} Years",
+            f"£{final_equity:,.0f}",
+            delta=f"£{final_equity - total_acquisition:,.0f}",
+            delta_color="normal",
+            help="Total equity (property value - remaining mortgage) after mortgage is paid off"
+        )
+    
+    with return_col3:
+        st.metric(
+            f"Total Return After {final_year} Years",
+            f"{final_return:.1f}%",
+            help="Total return including equity appreciation and rental income minus all costs"
+        )
+    
+    with return_col4:
+        annualized_return = ((final_equity / total_acquisition) ** (1/final_year) - 1) * 100 if total_acquisition > 0 else 0
+        st.metric(
+            "Annualized Return",
+            f"{annualized_return:.1f}%",
+            help="Compound annual growth rate of equity over the mortgage term"
+        )
+    
+    # Create the return analysis plot
+    st.subheader("📊 Return Analysis Over Time")
+    
+    # Create figure with secondary y-axis
+    fig = go.Figure()
+    
+    # Add equity line
+    fig.add_trace(go.Scatter(
+        x=analysis_data['years'],
+        y=analysis_data['equities'],
+        mode='lines+markers',
+        name='Equity',
+        line=dict(color='#1f77b4', width=3),
+        marker=dict(size=6)
+    ))
+    
+    # Add property value line
+    fig.add_trace(go.Scatter(
+        x=analysis_data['years'],
+        y=analysis_data['property_values'],
+        mode='lines+markers',
+        name='Property Value',
+        line=dict(color='#ff7f0e', width=2),
+        marker=dict(size=4)
+    ))
+    
+    # Add remaining mortgage line
+    fig.add_trace(go.Scatter(
+        x=analysis_data['years'],
+        y=analysis_data['remaining_mortgages'],
+        mode='lines+markers',
+        name='Remaining Mortgage',
+        line=dict(color='#d62728', width=2),
+        marker=dict(size=4)
+    ))
+    
+    # Add return percentage line (secondary y-axis)
+    fig.add_trace(go.Scatter(
+        x=analysis_data['years'],
+        y=analysis_data['net_returns'],
+        mode='lines+markers',
+        name='Total Return %',
+        line=dict(color='#2ca02c', width=3),
+        marker=dict(size=6),
+        yaxis='y2'
+    ))
+    
+    # Update layout
+    fig.update_layout(
+        title=f'Property Investment Analysis Over {mortgage_term_years} Years<br><sub>Property Appreciation: {property_appreciation_rate}% per year</sub>',
+        xaxis_title='Year',
+        yaxis_title='Value (£)',
+        yaxis2=dict(
+            title='Return (%)',
+            overlaying='y',
+            side='right'
+        ),
+        hovermode='x unified',
+        legend=dict(
+            yanchor="top",
+            y=0.99,
+            xanchor="left",
+            x=0.01
+        ),
+        height=600
+    )
+    
+    # Format y-axis as currency
+    fig.update_yaxes(tickformat='£,.0f')
+    fig.update_layout(yaxis2=dict(tickformat='.1f%'))
+    
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Additional Return Analysis Plots
+    st.subheader("📈 Return Rate & Amount Analysis")
+    
+    # Create two columns for the new plots
+    plot_col1, plot_col2 = st.columns(2)
+    
+    with plot_col1:
+        # Return Rate per Year Plot
+        fig_rate = go.Figure()
+        
+        # Calculate annual return rates
+        annual_return_rates = []
+        for i in range(1, len(analysis_data['years'])):
+            if i == 1:
+                # First year return rate: (equity + rental income - costs - initial investment) / initial investment
+                first_year_equity = analysis_data['equities'][i]
+                first_year_rental = analysis_data['cumulative_rental_income'][i]
+                first_year_costs = analysis_data['cumulative_costs'][i]
+                first_year_return = first_year_equity + first_year_rental - first_year_costs - total_acquisition
+                rate = (first_year_return / total_acquisition) * 100 if total_acquisition > 0 else 0
+            else:
+                # Year-over-year return rate: (current_equity - previous_equity + annual_rental - annual_costs) / previous_equity
+                prev_equity = analysis_data['equities'][i-1]
+                curr_equity = analysis_data['equities'][i]
+                annual_rental = monthly_rent * 12
+                # Calculate annual costs (operating + interest only)
+                if maintenance_method == "1% of property value":
+                    maintenance = property_price * 0.01
+                else:
+                    maintenance = monthly_rent * 12 * 0.10
+                management_fees = monthly_rent * 12 * (management_fee_percent / 100)
+                annual_operating_costs = (
+                    service_charge + ground_rent + council_tax + insurance +
+                    management_fees + maintenance + gas_safety + electrical_inspection / 5 + 
+                    epc_certificate / 10 + (void_days / 365) * (monthly_rent * 12)
+                )
+                annual_mortgage_payment = mortgage_annual_payment(loan_amount, mortgage_interest_rate, mortgage_term_years)
+                annual_interest = annual_mortgage_payment / 2  # Simplified: half interest, half principal
+                annual_costs = annual_operating_costs + annual_interest
+                
+                annual_return = (curr_equity - prev_equity) + annual_rental - annual_costs
+                rate = (annual_return / prev_equity) * 100 if prev_equity > 0 else 0
+            annual_return_rates.append(rate)
+        
+        fig_rate.add_trace(go.Scatter(
+            x=analysis_data['years'][1:],  # Skip year 0
+            y=annual_return_rates,
+            mode='lines+markers',
+            name='Annual Return Rate',
+            line=dict(color='#2ca02c', width=3),
+            marker=dict(size=8)
+        ))
+        
+        fig_rate.update_layout(
+            title='Return Rate per Year',
+            xaxis_title='Year',
+            yaxis_title='Return Rate (%)',
+            height=400,
+            showlegend=False
+        )
+        
+        fig_rate.update_yaxes(tickformat='.1f%')
+        st.plotly_chart(fig_rate, use_container_width=True)
+    
+    with plot_col2:
+        # Return Amount per Year Plot
+        fig_amount = go.Figure()
+        
+        # Calculate annual return amounts
+        annual_return_amounts = []
+        for i in range(1, len(analysis_data['years'])):
+            if i == 1:
+                # First year return amount: equity + rental income - costs - initial investment
+                first_year_equity = analysis_data['equities'][i]
+                first_year_rental = analysis_data['cumulative_rental_income'][i]
+                first_year_costs = analysis_data['cumulative_costs'][i]
+                amount = first_year_equity + first_year_rental - first_year_costs - total_acquisition
+            else:
+                # Year-over-year return amount: equity increase + rental income - costs
+                prev_equity = analysis_data['equities'][i-1]
+                curr_equity = analysis_data['equities'][i]
+                annual_rental = monthly_rent * 12
+                # Calculate annual costs (operating + interest only)
+                if maintenance_method == "1% of property value":
+                    maintenance = property_price * 0.01
+                else:
+                    maintenance = monthly_rent * 12 * 0.10
+                management_fees = monthly_rent * 12 * (management_fee_percent / 100)
+                annual_operating_costs = (
+                    service_charge + ground_rent + council_tax + insurance +
+                    management_fees + maintenance + gas_safety + electrical_inspection / 5 + 
+                    epc_certificate / 10 + (void_days / 365) * (monthly_rent * 12)
+                )
+                annual_mortgage_payment = mortgage_annual_payment(loan_amount, mortgage_interest_rate, mortgage_term_years)
+                annual_interest = annual_mortgage_payment / 2  # Simplified: half interest, half principal
+                annual_costs = annual_operating_costs + annual_interest
+                
+                amount = (curr_equity - prev_equity) + annual_rental - annual_costs
+            annual_return_amounts.append(amount)
+        
+        fig_amount.add_trace(go.Scatter(
+            x=analysis_data['years'][1:],  # Skip year 0
+            y=annual_return_amounts,
+            mode='lines+markers',
+            name='Annual Return Amount',
+            line=dict(color='#1f77b4', width=3),
+            marker=dict(size=8),
+            fill='tonexty' if len(annual_return_amounts) > 1 else 'tozeroy'
+        ))
+        
+        fig_amount.update_layout(
+            title='Return Amount per Year',
+            xaxis_title='Year',
+            yaxis_title='Return Amount (£)',
+            height=400,
+            showlegend=False
+        )
+        
+        fig_amount.update_yaxes(tickformat='£,.0f')
+        st.plotly_chart(fig_amount, use_container_width=True)
+    
+    # Summary of return metrics
+    st.subheader("📊 Return Summary")
+    summary_col1, summary_col2, summary_col3 = st.columns(3)
+    
+    with summary_col1:
+        avg_annual_return_rate = sum(annual_return_rates) / len(annual_return_rates) if annual_return_rates else 0
+        st.metric(
+            "Average Annual Return Rate",
+            f"{avg_annual_return_rate:.1f}%",
+            help="Average return rate per year over the mortgage term"
+        )
+    
+    with summary_col2:
+        total_return_amount = analysis_data['equities'][-1] - total_acquisition
+        st.metric(
+            "Total Return Amount",
+            f"£{total_return_amount:,.0f}",
+            help="Total return amount over the entire mortgage term"
+        )
+    
+    with summary_col3:
+        best_year_return = max(annual_return_rates) if annual_return_rates else 0
+        best_year = analysis_data['years'][annual_return_rates.index(best_year_return) + 1] if annual_return_rates else 0
+        st.metric(
+            "Best Year Return Rate",
+            f"{best_year_return:.1f}%",
+            delta=f"Year {best_year}",
+            help="Highest annual return rate achieved"
+        )
+    
+    # Detailed yearly breakdown
+    with st.expander("Show Detailed Yearly Breakdown"):
+        st.subheader("📋 Year-by-Year Analysis")
+        
+        # Create a DataFrame for better display
+        
+        df_data = {
+            'Year': analysis_data['years'],
+            'Property Value (£)': [f"£{val:,.0f}" for val in analysis_data['property_values']],
+            'Remaining Mortgage (£)': [f"£{val:,.0f}" for val in analysis_data['remaining_mortgages']],
+            'Equity (£)': [f"£{val:,.0f}" for val in analysis_data['equities']],
+            'Total Return (%)': [f"{val:.1f}%" for val in analysis_data['net_returns']]
+        }
+        
+        df = pd.DataFrame(df_data)
+        st.dataframe(df, use_container_width=True)
+        
+        # Summary statistics
+        st.subheader("📊 Summary Statistics")
+        summary_col1, summary_col2 = st.columns(2)
+        
+        with summary_col1:
+            st.metric("Initial Investment", f"£{total_acquisition:,.0f}")
+            st.metric("Final Property Value", f"£{final_property_value:,.0f}")
+            st.metric("Total Appreciation", f"£{final_property_value - property_price:,.0f}")
+        
+        with summary_col2:
+            st.metric("Final Equity", f"£{final_equity:,.0f}")
+            st.metric("Total Return", f"{final_return:.1f}%")
+            st.metric("Annualized Return", f"{annualized_return:.1f}%")
 
 st.caption("All calculations are estimates. For detailed advice, consult a qualified property accountant or advisor.")
