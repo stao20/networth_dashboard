@@ -5,6 +5,7 @@ from typing import Dict, List
 
 from config import Config
 from utils.auth import GoogleAuth
+from utils.currency import get_currency_list, convert_currency, format_currency, get_currency_display_name
 
 db_handler = Config.DB_HANDLER
 auth = GoogleAuth()
@@ -91,7 +92,7 @@ with tabs[0]:
         
         with col1:
             st.metric(
-                "Current Net Worth",
+                "Current Net Worth (GBP)",
                 f"£{latest_total:,.2f}",
                 delta=None
             )
@@ -119,7 +120,7 @@ with tabs[0]:
         )
         fig_networth.update_layout(
             xaxis_title="Date",
-            yaxis_title="Net Worth (£)",
+            yaxis_title="Net Worth (GBP £)",
             hovermode="x unified"
         )
         st.plotly_chart(fig_networth, use_container_width=True)
@@ -206,6 +207,18 @@ with tabs[1]:
                 )
                 selected_category = next(cat for cat in st.session_state.categories if cat["name"] == new_account_category)
                 new_account_name = st.text_input("New Account Name")
+                
+                # Currency selection
+                currency_options = get_currency_list()
+                default_currency = 'GBP'
+                selected_currency = st.selectbox(
+                    "Currency",
+                    options=currency_options,
+                    index=currency_options.index(default_currency) if default_currency in currency_options else 0,
+                    format_func=lambda x: f"{x} - {get_currency_display_name(x)}",
+                    key="new_account_currency"
+                )
+                
                 submit_account = st.form_submit_button("Add Account")
                 
                 if submit_account and new_account_name:
@@ -242,8 +255,9 @@ with tabs[1]:
 # Account Values Tab
 with tabs[2]:
     st.subheader("Add/Update Account Values")
+    st.info("💱 **Currency Support**: You can enter account values in any currency. They will be automatically converted to GBP (British Pounds) and stored in the database. All charts and displays show values in GBP.")
     with st.form("account_value_form"):
-        val_col1, val_col2, val_col3 = st.columns(3)
+        val_col1, val_col2, val_col3, val_col4 = st.columns(4)
         
         with val_col1:
             date = st.date_input("Date")
@@ -257,20 +271,51 @@ with tabs[2]:
                 selected_account = next(acc for acc in st.session_state.accounts if acc["name"] == account)
         
         with val_col3:
+            # Currency selection for the value
+            currency_options = get_currency_list()
+            default_currency = 'GBP'
+            value_currency = st.selectbox(
+                "Currency",
+                options=currency_options,
+                index=currency_options.index(default_currency) if default_currency in currency_options else 0,
+                format_func=lambda x: f"{x} - {get_currency_display_name(x)}",
+                key="value_currency"
+            )
+        
+        with val_col4:
             account_value = st.number_input(
-                "Account Value",
+                f"Account Value ({value_currency})",
                 min_value=0.0,
                 max_value=1e12,
                 value=0.0,
                 step=0.01,
                 format="%.2f",
-                help="Enter the account value"
+                help=f"Enter the account value in {value_currency}"
             )
+        
+        # Show conversion preview
+        if account_value > 0 and value_currency != 'GBP':
+            converted_value = convert_currency(account_value, value_currency, 'GBP')
+            if converted_value is not None:
+                st.info(f"💱 **Conversion Preview**: {format_currency(account_value, value_currency)} = {format_currency(converted_value, 'GBP')}")
+            else:
+                st.warning("⚠️ Could not convert currency. Please check your internet connection or try again later.")
         
         submit_value = st.form_submit_button("Add/Update Account Value")
         if submit_value:
             try:
-                db_handler.save_account_value(selected_account["id"], date.strftime("%Y-%m-%d"), account_value)
+                # Convert to GBP if needed
+                final_value = account_value
+                if value_currency != 'GBP':
+                    converted_value = convert_currency(account_value, value_currency, 'GBP')
+                    if converted_value is not None:
+                        final_value = converted_value
+                        st.info(f"✅ Converted {format_currency(account_value, value_currency)} to {format_currency(final_value, 'GBP')} and saved to database.")
+                    else:
+                        st.error("❌ Currency conversion failed. Please try again or use GBP.")
+                        st.stop()
+                
+                db_handler.save_account_value(selected_account["id"], date.strftime("%Y-%m-%d"), final_value)
                 st.success(f"Account {account} value for {date} saved successfully!")
                 # Refresh the page to show the new data
                 st.rerun()
@@ -372,7 +417,7 @@ with tabs[3]:
         
         fig_category.update_layout(
             xaxis_title="Date",
-            yaxis_title="Value (£)",
+            yaxis_title="Value (GBP £)",
             hovermode="x unified"
         )
         st.plotly_chart(fig_category, use_container_width=True)
