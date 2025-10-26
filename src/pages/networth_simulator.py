@@ -2,6 +2,7 @@ import streamlit as st
 import numpy as np
 import plotly.graph_objs as go
 from utils.models import Pot
+from datetime import datetime
 
 st.title('Net Worth Simulator')
 
@@ -120,56 +121,315 @@ else:
         
         # Total Net Worth Plot
         fig_total = go.Figure()
-        fig_total.add_trace(go.Scatter(x=timeline / 12, y=filtered_networth, mode='lines', name='Total Net Worth'))
+        fig_total.add_trace(go.Scatter(
+            x=timeline / 12, 
+            y=filtered_networth, 
+            mode='lines', 
+            name='Total Net Worth',
+            line=dict(color='#2E86AB', width=3),
+            fill='tonexty'
+        ))
         fig_total.update_layout(
-            title='Total Net Worth Growth Over Time',
+            title=dict(
+                text='Total Net Worth Growth Over Time',
+                font=dict(size=20, color='#1a1a1a')
+            ),
             xaxis_title='Years',
             yaxis_title='Net Worth',
-            xaxis=dict(range=[0, years])
+            xaxis=dict(range=[0, years]),
+            plot_bgcolor='#f8f9fa',
+            paper_bgcolor='white',
+            font=dict(color='#333333'),
+            margin=dict(l=60, r=60, t=80, b=60)
         )
         st.plotly_chart(fig_total)
 
         # Pot Breakdown Plot
         fig_breakdown = go.Figure()
-        for name, data in filtered_pot_breakdown.items():
-            fig_breakdown.add_trace(go.Scatter(x=timeline / 12, y=data, mode='lines', name=name))
+        
+        # Define a color palette for different pots
+        colors = ['#2E86AB', '#A23B72', '#F18F01', '#C73E1D', '#7209B7', '#048A81', '#F77F00', '#FCBF49']
+        
+        for i, (name, data) in enumerate(filtered_pot_breakdown.items()):
+            color = colors[i % len(colors)]
+            fig_breakdown.add_trace(go.Scatter(
+                x=timeline / 12, 
+                y=data, 
+                mode='lines', 
+                name=name,
+                line=dict(color=color, width=2.5),
+                fill='tonexty' if i == 0 else None
+            ))
+        
         fig_breakdown.update_layout(
-            title='Net Worth Breakdown by Pot',
+            title=dict(
+                text='Net Worth Breakdown by Pot',
+                font=dict(size=20, color='#1a1a1a')
+            ),
             xaxis_title='Years',
             yaxis_title='Net Worth',
             showlegend=True,
-            xaxis=dict(range=[0, years])
+            xaxis=dict(range=[0, years]),
+            plot_bgcolor='#f8f9fa',
+            paper_bgcolor='white',
+            font=dict(color='#333333'),
+            margin=dict(l=60, r=60, t=80, b=60),
+            legend=dict(
+                bgcolor='rgba(255,255,255,0.8)',
+                bordercolor='#cccccc',
+                borderwidth=1
+            )
         )
         st.plotly_chart(fig_breakdown)
 
-        pot_settings_html = "<h3>Pot Settings</h3>"
+        pot_settings_html = ""
         for pot_item in st.session_state.pots:
             if pot_item.name in selected_pots:
+                contribution_type = st.session_state.contribution_types.get(pot_item.name, "Monthly")
+                contribution_label = "Monthly" if contribution_type == "Monthly" else "Yearly"
                 pot_settings_html += f"""\
-                <h4>{pot_item.name}</h4>
-                <ul>
-                    <li>Initial Amount: {pot_item.initial if pot_item.initial is not None else 0.0}</li>
-                    <li>Monthly Contribution: {pot_item.monthly if pot_item.monthly is not None else 0.0}</li>
-                    <li>Annual Return Rate: {pot_item.rate if pot_item.rate is not None else 0.0}%</li>
-                </ul>
+                <div class="pot-card">
+                    <h4>{pot_item.name}</h4>
+                    <ul>
+                        <li><strong>Initial Amount:</strong> £{pot_item.initial if pot_item.initial is not None else 0.0:,.2f}</li>
+                        <li><strong>{contribution_label} Contribution:</strong> £{pot_item.monthly if pot_item.monthly is not None else 0.0:,.2f}</li>
+                        <li><strong>Annual Return Rate:</strong> {pot_item.rate if pot_item.rate is not None else 0.0:.2f}%</li>
+                    </ul>
+                </div>
                 """
 
         html_report = f"""\
-        <html>
-            <head><title>Net Worth Simulation Report</title></head>
-            <body>
-                <h1>Net Worth Simulation Report</h1>
-                <h3>Simulation Settings</h3>
-                <ul>
-                    <li>Simulation Period: {years} years</li>
-                    <li>Selected Pots: {', '.join(selected_pots)}</li>
-                </ul>
-                {pot_settings_html}
-                <h2>Total Net Worth</h2>
-                {fig_total.to_html(full_html=False, include_plotlyjs='cdn')}
-                <h2>Pot Breakdown</h2>
-                {fig_breakdown.to_html(full_html=False, include_plotlyjs='cdn')}
-            </body>
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Net Worth Simulation Report</title>
+            <style>
+                * {{
+                    margin: 0;
+                    padding: 0;
+                    box-sizing: border-box;
+                }}
+                
+                body {{
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                    line-height: 1.6;
+                    color: #333;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    min-height: 100vh;
+                    padding: 20px;
+                }}
+                
+                .container {{
+                    max-width: 1200px;
+                    margin: 0 auto;
+                    background: white;
+                    border-radius: 15px;
+                    box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+                    overflow: hidden;
+                }}
+                
+                .header {{
+                    background: linear-gradient(135deg, #2E86AB 0%, #A23B72 100%);
+                    color: white;
+                    padding: 40px;
+                    text-align: center;
+                }}
+                
+                .header h1 {{
+                    font-size: 2.5em;
+                    margin-bottom: 10px;
+                    font-weight: 300;
+                }}
+                
+                .header p {{
+                    font-size: 1.2em;
+                    opacity: 0.9;
+                }}
+                
+                .content {{
+                    padding: 40px;
+                }}
+                
+                .section {{
+                    margin-bottom: 40px;
+                    padding: 30px;
+                    background: #f8f9fa;
+                    border-radius: 10px;
+                    border-left: 5px solid #2E86AB;
+                }}
+                
+                .section h2 {{
+                    color: #2E86AB;
+                    font-size: 1.8em;
+                    margin-bottom: 20px;
+                    font-weight: 500;
+                }}
+                
+                .section h3 {{
+                    color: #A23B72;
+                    font-size: 1.4em;
+                    margin-bottom: 15px;
+                    font-weight: 500;
+                }}
+                
+                .section h4 {{
+                    color: #333;
+                    font-size: 1.2em;
+                    margin-bottom: 10px;
+                    font-weight: 500;
+                }}
+                
+                .settings-grid {{
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+                    gap: 20px;
+                    margin-top: 20px;
+                }}
+                
+                .pot-card {{
+                    background: white;
+                    padding: 20px;
+                    border-radius: 8px;
+                    box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+                    border-left: 4px solid #2E86AB;
+                }}
+                
+                .pot-card h4 {{
+                    color: #2E86AB;
+                    margin-bottom: 15px;
+                }}
+                
+                .pot-card ul {{
+                    list-style: none;
+                }}
+                
+                .pot-card li {{
+                    padding: 8px 0;
+                    border-bottom: 1px solid #eee;
+                    display: flex;
+                    justify-content: space-between;
+                }}
+                
+                .pot-card li:last-child {{
+                    border-bottom: none;
+                }}
+                
+                .pot-card li strong {{
+                    color: #A23B72;
+                }}
+                
+                .chart-container {{
+                    background: white;
+                    padding: 20px;
+                    border-radius: 10px;
+                    box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+                    margin: 20px 0;
+                }}
+                
+                .summary-stats {{
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                    gap: 20px;
+                    margin: 20px 0;
+                }}
+                
+                .stat-card {{
+                    background: linear-gradient(135deg, #2E86AB, #A23B72);
+                    color: white;
+                    padding: 20px;
+                    border-radius: 10px;
+                    text-align: center;
+                }}
+                
+                .stat-card h3 {{
+                    font-size: 2em;
+                    margin-bottom: 5px;
+                }}
+                
+                .stat-card p {{
+                    opacity: 0.9;
+                }}
+                
+                @media (max-width: 768px) {{
+                    .container {{
+                        margin: 10px;
+                        border-radius: 10px;
+                    }}
+                    
+                    .header {{
+                        padding: 20px;
+                    }}
+                    
+                    .header h1 {{
+                        font-size: 2em;
+                    }}
+                    
+                    .content {{
+                        padding: 20px;
+                    }}
+                    
+                    .section {{
+                        padding: 20px;
+                    }}
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>📈 Net Worth Simulation Report</h1>
+                    <p>Generated on {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</p>
+                </div>
+                
+                <div class="content">
+                    <div class="section">
+                        <h2>📊 Simulation Overview</h2>
+                        <div class="summary-stats">
+                            <div class="stat-card">
+                                <h3>{years}</h3>
+                                <p>Years Simulated</p>
+                            </div>
+                            <div class="stat-card">
+                                <h3>{len(selected_pots)}</h3>
+                                <p>Investment Pots</p>
+                            </div>
+                            <div class="stat-card">
+                                <h3>£{filtered_networth[-1]:,.0f}</h3>
+                                <p>Final Net Worth</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="section">
+                        <h2>📋 Selected Pots</h2>
+                        <p><strong>Active Pots:</strong> {', '.join(selected_pots)}</p>
+                    </div>
+                    
+                    <div class="section">
+                        <h2>💰 Pot Configuration</h2>
+                        <div class="settings-grid">
+                            {pot_settings_html}
+                        </div>
+                    </div>
+                    
+                    <div class="section">
+                        <h2>📈 Total Net Worth Growth</h2>
+                        <div class="chart-container">
+                            {fig_total.to_html(full_html=False, include_plotlyjs='cdn')}
+                        </div>
+                    </div>
+                    
+                    <div class="section">
+                        <h2>🎯 Pot Breakdown Analysis</h2>
+                        <div class="chart-container">
+                            {fig_breakdown.to_html(full_html=False, include_plotlyjs='cdn')}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </body>
         </html>
         """
         st.download_button(
