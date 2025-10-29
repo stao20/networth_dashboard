@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 from typing import Dict, List
 
 from config import Config
@@ -122,21 +123,24 @@ with tabs[0]:
         # Summary metrics
         # Prepare net worth time series and change periods
         latest_date = account_data["date"].max()
-        latest_total = account_data[account_data["date"] == latest_date]["value"].sum()
 
-        # Build daily forward-filled net worth series for change calculations
+        # Build daily forward-filled net worth series for change calculations (extend to today)
         net_worth_df = account_data.groupby("date")["value"].sum().reset_index()
         net_worth_df.columns = ["date", "net_worth"]
         net_worth_df["date"] = pd.to_datetime(net_worth_df["date"]).dt.normalize()
         net_worth_series = net_worth_df.set_index("date")["net_worth"].sort_index()
         if not net_worth_series.empty:
-            full_index = pd.date_range(net_worth_series.index.min(), net_worth_series.index.max(), freq="D")
+            today = pd.Timestamp("today").normalize()
+            full_index = pd.date_range(net_worth_series.index.min(), today, freq="D")
             net_worth_series = net_worth_series.reindex(full_index).ffill()
+
+        # Latest for metrics should be today's value (ffilled if missing)
+        latest_total = float(net_worth_series.loc[pd.Timestamp("today").normalize()]) if not net_worth_series.empty else 0.0
 
         def compute_pct_change(period_key: str):
             if net_worth_series.empty:
                 return None
-            latest_idx = net_worth_series.index.max()
+            latest_idx = pd.Timestamp("today").normalize()
             latest_val = float(net_worth_series.loc[latest_idx])
             # Determine comparison start date
             if period_key == "YTD":
@@ -226,8 +230,9 @@ with tabs[0]:
                 return latest_idx - pd.DateOffset(years=5)
             return None
 
-        # Always plot full history; the built-in range selector controls the visible window
-        plot_df = net_worth_df.copy()
+        # Always plot full history using the forward-filled series extended to today
+        plot_df = net_worth_series.reset_index()
+        plot_df.columns = ["date", "net_worth"]
 
         # Area chart for a look similar to stock charts
         fig_networth = px.area(
@@ -235,12 +240,26 @@ with tabs[0]:
             x="date",
             y="net_worth",
             title="Net Worth Over Time",
+            markers=True,
         )
         fig_networth.update_layout(
             xaxis_title="Date",
             yaxis_title="Net Worth (GBP £)",
             hovermode="x unified"
         )
+        fig_networth.update_traces(line=dict(width=2.5), marker=dict(size=5))
+        # Highlight the latest data point
+        latest_idx_for_plot = pd.Timestamp("today").normalize()
+        if not net_worth_series.empty and latest_idx_for_plot in net_worth_series.index:
+            latest_val_for_plot = float(net_worth_series.loc[latest_idx_for_plot])
+            fig_networth.add_trace(go.Scatter(
+                x=[latest_idx_for_plot],
+                y=[latest_val_for_plot],
+                mode="markers",
+                marker=dict(size=10, color="#2E86AB", line=dict(color="#ffffff", width=2)),
+                name="Latest",
+                showlegend=False,
+            ))
         # In-chart period selector (rangeselector)
         fig_networth.update_xaxes(
             rangeselector=dict(
