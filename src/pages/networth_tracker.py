@@ -46,6 +46,40 @@ st.markdown("""
     .st-emotion-cache-1y4p8pa {
         max-width: 100%;
     }
+    /* Period toolbar styling */
+    #period-toolbar [role="radiogroup"] {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        align-items: center;
+    }
+    #period-toolbar [role="radiogroup"] label {
+        padding: 4px 10px;
+        border: 1px solid #e3e6eb;
+        border-radius: 10px;
+        background: #f7f9fc;
+        color: #5f6c7b;
+        cursor: pointer;
+        transition: all .15s ease;
+        font-weight: 500;
+        font-size: 0.9rem;
+        text-transform: uppercase;
+    }
+    #period-toolbar [role="radiogroup"] label:hover {
+        background: #eef2f7;
+    }
+    #period-toolbar [role="radiogroup"] label[data-checked="true"]{
+        background: #e8f5ec;
+        color: #2c7a4b;
+        border-color: #bfe3cc;
+    }
+    #period-toolbar {
+        display: flex;
+        justify-content: flex-start;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 0 0 0;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -86,15 +120,75 @@ tabs = st.tabs([
 with tabs[0]:
     if not account_data.empty:
         # Summary metrics
-        col1, col2, col3 = st.columns(3)
+        # Prepare net worth time series and change periods
         latest_date = account_data["date"].max()
         latest_total = account_data[account_data["date"] == latest_date]["value"].sum()
+
+        # Build daily forward-filled net worth series for change calculations
+        net_worth_df = account_data.groupby("date")["value"].sum().reset_index()
+        net_worth_df.columns = ["date", "net_worth"]
+        net_worth_df["date"] = pd.to_datetime(net_worth_df["date"]).dt.normalize()
+        net_worth_series = net_worth_df.set_index("date")["net_worth"].sort_index()
+        if not net_worth_series.empty:
+            full_index = pd.date_range(net_worth_series.index.min(), net_worth_series.index.max(), freq="D")
+            net_worth_series = net_worth_series.reindex(full_index).ffill()
+
+        def compute_pct_change(period_key: str):
+            if net_worth_series.empty:
+                return None
+            latest_idx = net_worth_series.index.max()
+            latest_val = float(net_worth_series.loc[latest_idx])
+            # Determine comparison start date
+            if period_key == "YTD":
+                start_idx = latest_idx.replace(month=1, day=1)
+            elif period_key == "1d":
+                start_idx = latest_idx - pd.DateOffset(days=1)
+            elif period_key == "1w":
+                start_idx = latest_idx - pd.DateOffset(weeks=1)
+            elif period_key == "1m":
+                start_idx = latest_idx - pd.DateOffset(months=1)
+            elif period_key == "3m":
+                start_idx = latest_idx - pd.DateOffset(months=3)
+            elif period_key == "1y":
+                start_idx = latest_idx - pd.DateOffset(years=1)
+            elif period_key == "3y":
+                start_idx = latest_idx - pd.DateOffset(years=3)
+            elif period_key == "5y":
+                start_idx = latest_idx - pd.DateOffset(years=5)
+            elif period_key == "MAX":
+                start_idx = net_worth_series.index.min()
+            else:
+                return None
+            # Clamp to available range
+            if start_idx < net_worth_series.index.min():
+                start_idx = net_worth_series.index.min()
+            if start_idx > latest_idx:
+                start_idx = latest_idx
+            prior_val = float(net_worth_series.loc[start_idx])
+            if prior_val == 0:
+                return None
+            return (latest_val - prior_val) / prior_val * 100.0
+
+        # Period selector driving the metric and initial chart window
+        period_options = ["1d", "1w", "1m", "3m", "YTD", "1y", "3y", "5y", "MAX"]
+        current_period = st.session_state.get("networth_change_period_overview", "1m")
+        st.radio(
+            "",
+            options=period_options,
+            index=period_options.index(current_period) if current_period in period_options else 2,
+            key="networth_change_period_overview",
+            horizontal=True,
+        )
+        current_period = st.session_state.get("networth_change_period_overview", "1m")
+        pct_change = compute_pct_change(current_period)
+
+        col1, col2, col3 = st.columns(3)
         
         with col1:
             st.metric(
                 "Current Net Worth (GBP)",
                 f"£{latest_total:,.2f}",
-                delta=None
+                delta=(f"{pct_change:.2f}%" if pct_change is not None else "N/A")
             )
         
         with col2:
@@ -107,23 +201,72 @@ with tabs[0]:
         
         # Net Worth Chart
         st.subheader("Net Worth Trend")
-        net_worth_df = account_data.groupby("date")["value"].sum().reset_index()
-        net_worth_df.columns = ["date", "net_worth"]
-        net_worth_df["date"] = pd.to_datetime(net_worth_df["date"])
-        
-        fig_networth = px.line(
-            net_worth_df,
+        # Determine start date for chart range based on selection
+        def get_start_date_for_chart(period_key: str):
+            if net_worth_series.empty:
+                return None
+            latest_idx = net_worth_series.index.max()
+            if period_key == "MAX":
+                return None
+            if period_key == "YTD":
+                return latest_idx.replace(month=1, day=1)
+            if period_key == "1d":
+                return latest_idx - pd.DateOffset(days=1)
+            if period_key == "1w":
+                return latest_idx - pd.DateOffset(weeks=1)
+            if period_key == "1m":
+                return latest_idx - pd.DateOffset(months=1)
+            if period_key == "3m":
+                return latest_idx - pd.DateOffset(months=3)
+            if period_key == "1y":
+                return latest_idx - pd.DateOffset(years=1)
+            if period_key == "3y":
+                return latest_idx - pd.DateOffset(years=3)
+            if period_key == "5y":
+                return latest_idx - pd.DateOffset(years=5)
+            return None
+
+        # Always plot full history; the built-in range selector controls the visible window
+        plot_df = net_worth_df.copy()
+
+        # Area chart for a look similar to stock charts
+        fig_networth = px.area(
+            plot_df,
             x="date",
             y="net_worth",
             title="Net Worth Over Time",
-            markers=True
         )
         fig_networth.update_layout(
             xaxis_title="Date",
             yaxis_title="Net Worth (GBP £)",
             hovermode="x unified"
         )
+        # In-chart period selector (rangeselector)
+        fig_networth.update_xaxes(
+            rangeselector=dict(
+                buttons=[
+                    dict(count=1, label="1d", step="day", stepmode="backward"),
+                    dict(count=7, label="1w", step="day", stepmode="backward"),
+                    dict(count=1, label="1m", step="month", stepmode="backward"),
+                    dict(count=3, label="3m", step="month", stepmode="backward"),
+                    dict(step="year", stepmode="todate", label="YTD"),
+                    dict(count=1, label="1y", step="year", stepmode="backward"),
+                    dict(count=3, label="3y", step="year", stepmode="backward"),
+                    dict(count=5, label="5y", step="year", stepmode="backward"),
+                    dict(step="all", label="MAX"),
+                ],
+                bgcolor="#ffffff",
+                activecolor="#e8f5ec",
+                font=dict(color="#5f6c7b"),
+            ),
+            rangeslider=dict(visible=False),
+        )
+        # Set initial visible range to match the selected period
+        start_visible = get_start_date_for_chart(current_period)
+        if start_visible is not None:
+            fig_networth.update_xaxes(range=[pd.to_datetime(start_visible), net_worth_series.index.max()])
         st.plotly_chart(fig_networth, use_container_width=True)
+
         
         # Distribution Analysis
         st.subheader("Current Distribution")
