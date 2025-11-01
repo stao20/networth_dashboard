@@ -137,9 +137,10 @@ with tabs[0]:
         # Latest for metrics should be today's value (ffilled if missing)
         latest_total = float(net_worth_series.loc[pd.Timestamp("today").normalize()]) if not net_worth_series.empty else 0.0
 
-        def compute_pct_change(period_key: str):
+        def compute_change(period_key: str):
+            """Compute both percentage and absolute value change"""
             if net_worth_series.empty:
-                return None
+                return None, None
             latest_idx = pd.Timestamp("today").normalize()
             latest_val = float(net_worth_series.loc[latest_idx])
             # Determine comparison start date
@@ -162,7 +163,7 @@ with tabs[0]:
             elif period_key == "MAX":
                 start_idx = net_worth_series.index.min()
             else:
-                return None
+                return None, None
             # Clamp to available range
             if start_idx < net_worth_series.index.min():
                 start_idx = net_worth_series.index.min()
@@ -170,29 +171,37 @@ with tabs[0]:
                 start_idx = latest_idx
             prior_val = float(net_worth_series.loc[start_idx])
             if prior_val == 0:
-                return None
-            return (latest_val - prior_val) / prior_val * 100.0
+                return None, None
+            value_change = latest_val - prior_val
+            pct_change = (value_change / prior_val) * 100.0
+            return value_change, pct_change
 
         # Period selector driving the metric and initial chart window
         period_options = ["1d", "1w", "1m", "3m", "YTD", "1y", "3y", "5y", "MAX"]
         current_period = st.session_state.get("networth_change_period_overview", "1m")
         st.radio(
-            "",
+            "Period",
             options=period_options,
             index=period_options.index(current_period) if current_period in period_options else 2,
             key="networth_change_period_overview",
             horizontal=True,
+            label_visibility="hidden",
         )
         current_period = st.session_state.get("networth_change_period_overview", "1m")
-        pct_change = compute_pct_change(current_period)
+        value_change, pct_change = compute_change(current_period)
 
         col1, col2, col3 = st.columns(3)
         
         with col1:
+            if value_change is not None and pct_change is not None:
+                sign = "+" if value_change >= 0 else "-"
+                delta_text = f"{sign}£{abs(value_change):,.2f} ({pct_change:+.2f}%)"
+            else:
+                delta_text = "N/A"
             st.metric(
                 "Current Net Worth (GBP)",
                 f"£{latest_total:,.2f}",
-                delta=(f"{pct_change:.2f}%" if pct_change is not None else "N/A")
+                delta=delta_text
             )
         
         with col2:
