@@ -467,10 +467,11 @@ def calculate_equity_and_return_analysis(property_price, loan_amount, mortgage_r
         # Track cumulative rental income and costs
         if year > 0:  # Start accumulating from year 1
             cumulative_rental += annual_rent_income
-            # Calculate actual interest for this year using proper amortization
-            # Only subtract interest portion of mortgage payment, not principal (principal increases equity)
-            annual_interest, _ = calculate_annual_interest_principal(loan_amount, mortgage_rate, mortgage_term, year)
-            cumulative_cost += annual_operating_costs + annual_interest
+            # Calculate actual interest AND principal for this year using proper amortization
+            # Include both interest AND principal in costs to avoid double-counting in total return
+            # (Principal increases equity AND is a cash outflow, so must be in costs)
+            annual_interest, annual_principal = calculate_annual_interest_principal(loan_amount, mortgage_rate, mortgage_term, year)
+            cumulative_cost += annual_operating_costs + annual_interest + annual_principal
         
         # Calculate net return (equity + cumulative rental income - cumulative costs - initial investment)
         net_return = equity + cumulative_rental - cumulative_cost - total_acquisition_cost

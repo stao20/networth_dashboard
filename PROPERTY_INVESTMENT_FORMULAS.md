@@ -165,23 +165,46 @@ Net Return % = ((Equity + Cumulative Rental Income - Cumulative Costs - Initial 
 **Components:**
 - **Equity** = Current Property Value - Remaining Mortgage
 - **Cumulative Rental Income** = Sum of all rental income from year 1 to current year
-- **Cumulative Costs** = Sum of (Operating Costs + Interest Only) over years
-  - ⚠️ **Note:** Principal payments are NOT included as costs (they build equity)
+- **Cumulative Costs** = Sum of (Operating Costs + Mortgage Interest + Mortgage Principal) over years
+  - ✅ **Note:** Principal payments ARE included as costs to prevent double-counting (principal increases equity AND is a cash outflow from rental income)
 - **Initial Investment** = Total upfront cash invested
 
-**Why this is important:** Provides total investment return including rental income, costs, and equity growth. This is the primary return metric displayed in the analysis charts.
+**Why this is important:** Provides total investment return including rental income, costs, and equity growth. By including principal payments in costs, the formula correctly separates equity growth (from property appreciation and mortgage paydown) from net rental income (actual cash benefit after all expenses).
 
-**Calculation (lines 470-477):**
+**Calculation (lines 468-478):**
 ```python
 if year > 0:
     cumulative_rental += annual_rent_income
-    # Calculate actual interest for this year using proper amortization
-    annual_interest, _ = calculate_annual_interest_principal(loan_amount, mortgage_rate, mortgage_term, year)
-    cumulative_cost += annual_operating_costs + annual_interest
+    # Calculate actual interest AND principal for this year using proper amortization
+    annual_interest, annual_principal = calculate_annual_interest_principal(loan_amount, mortgage_rate, mortgage_term, year)
+    cumulative_cost += annual_operating_costs + annual_interest + annual_principal
 
 net_return = equity + cumulative_rental - cumulative_cost - total_acquisition_cost
 net_return_percentage = (net_return / total_acquisition_cost) × 100
 ```
+
+**Understanding the Return Breakdown:**
+
+This formula correctly separates total return into two independent components:
+
+1. **Equity Growth Return** = (Final Equity - Initial Investment) / Initial Investment
+   - Captures property appreciation + mortgage paydown
+   - Example: Property worth £308,679, you paid £102,653 upfront → 200.6% equity return
+
+2. **Net Rental Income Return** = (Cumulative Rental - Cumulative Costs) / Initial Investment
+   - Captures actual cash benefit from rental operations after ALL expenses (including full mortgage payments)
+   - If rent exactly covers mortgage + operating costs → ~0% rental return
+   - If rent exceeds all costs → positive rental return
+   - If rent falls short → negative rental return
+
+**Total Return = Equity Growth Return + Net Rental Income Return**
+
+**Example Interpretation:**
+- Total Return: 200.6%
+- Equity Growth: 200.6% (property value increased and mortgage paid off)
+- Net Rental Income: ~0% (rental income covered expenses, but didn't generate extra profit)
+
+This prevents double-counting mortgage principal payments that would inflate the total return.
 
 ---
 
