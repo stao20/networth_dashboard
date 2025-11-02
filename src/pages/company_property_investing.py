@@ -131,6 +131,65 @@ def mortgage_annual_payment(principal, annual_rate, years):
     payment = principal * (r * (1 + r) ** n) / ((1 + r) ** n - 1)
     return payment * 12  # annual payment
 
+def calculate_annual_interest_principal(loan_amount, annual_rate, years, year_number):
+    """
+    Calculate actual interest and principal for a specific year using proper amortization.
+    
+    Args:
+        loan_amount: Original loan amount
+        annual_rate: Annual interest rate as percentage
+        years: Total mortgage term in years
+        year_number: Which year to calculate (1-based, where 1 = first year)
+    
+    Returns:
+        (annual_interest, annual_principal): Tuple of interest and principal paid in that year
+    """
+    if annual_rate == 0 or years == 0 or year_number < 1 or year_number > years:
+        # For zero interest or invalid year, simple linear split
+        annual_payment = mortgage_annual_payment(loan_amount, annual_rate, years)
+        if years == 0:
+            return 0, 0
+        return annual_payment / years, annual_payment / years
+    
+    # Calculate monthly payment
+    r = annual_rate / 100 / 12
+    n = years * 12
+    monthly_payment = loan_amount * (r * (1 + r) ** n) / ((1 + r) ** n - 1)
+    
+    # Calculate starting balance for this year
+    # Months elapsed before this year starts
+    months_elapsed = (year_number - 1) * 12
+    if months_elapsed == 0:
+        current_balance = loan_amount
+    else:
+        # Calculate remaining balance using present value formula
+        months_remaining_before_year = n - months_elapsed
+        current_balance = monthly_payment * ((1 - (1 + r) ** (-months_remaining_before_year)) / r)
+    
+    # Calculate interest and principal for each month in this year
+    annual_interest = 0.0
+    annual_principal = 0.0
+    balance = current_balance
+    
+    for month in range(12):
+        monthly_interest = balance * r
+        monthly_principal = monthly_payment - monthly_interest
+        annual_interest += monthly_interest
+        annual_principal += monthly_principal
+        balance = balance - monthly_principal
+    
+    return annual_interest, annual_principal
+
+def calculate_first_year_interest_principal(loan_amount, annual_rate, years):
+    """
+    Calculate interest and principal for the first year of the mortgage.
+    Wrapper function for convenience in fair price calculations.
+    
+    Returns:
+        (annual_interest, annual_principal): Tuple of interest and principal paid in year 1
+    """
+    return calculate_annual_interest_principal(loan_amount, annual_rate, years, 1)
+
 def calculate_corporation_tax(profit):
     """
     UK Corporation Tax (2023+):
@@ -161,9 +220,8 @@ def compute_net_yield(price):
     total_acquisition_fp = deposit_amount_fp + duty_fp + legal_fees + mortgage_product_fee + survey_costs + broker_fee_fp
     # Use annuity formula for annual mortgage payment
     annual_mortgage_payment_fp = mortgage_annual_payment(loan_amount_fp, mortgage_interest_rate, mortgage_term_years)
-    # Split: half interest, half equity
-    annual_interest_fp = annual_mortgage_payment_fp / 2
-    annual_equity_fp = annual_mortgage_payment_fp / 2
+    # Calculate actual first-year interest and principal using proper amortization
+    annual_interest_fp, annual_equity_fp = calculate_first_year_interest_principal(loan_amount_fp, mortgage_interest_rate, mortgage_term_years)
     if maintenance_method == "1% of property value":
         maintenance_fp = price * 0.01
     else:
@@ -193,8 +251,8 @@ def compute_cash_on_cash_return(price):
     
     # Use annuity formula for annual mortgage payment
     annual_mortgage_payment_fp = mortgage_annual_payment(loan_amount_fp, mortgage_interest_rate, mortgage_term_years)
-    annual_interest_fp = annual_mortgage_payment_fp / 2
-    annual_equity_fp = annual_mortgage_payment_fp / 2
+    # Calculate actual first-year interest and principal using proper amortization
+    annual_interest_fp, annual_equity_fp = calculate_first_year_interest_principal(loan_amount_fp, mortgage_interest_rate, mortgage_term_years)
     
     if maintenance_method == "1% of property value":
         maintenance_fp = price * 0.01
@@ -259,7 +317,8 @@ def find_max_cash_flow_price(rent, max_annual_cash_flow, mortgage_rate, mortgage
         # Calculate cash flow for this price
         loan_amount = mid * 0.75  # 75% LTV
         annual_mortgage_payment = mortgage_annual_payment(loan_amount, mortgage_rate, mortgage_term)
-        annual_interest = annual_mortgage_payment / 2
+        # Calculate actual first-year interest and principal using proper amortization
+        annual_interest, annual_equity = calculate_first_year_interest_principal(loan_amount, mortgage_rate, mortgage_term)
         
         # Calculate operating costs (simplified for this function)
         if maintenance_method == "1% of property value":
@@ -282,8 +341,7 @@ def find_max_cash_flow_price(rent, max_annual_cash_flow, mortgage_rate, mortgage
         corp_tax, _ = calculate_corporation_tax(max(0, taxable_profit))
         net_income_after_tax = net_income_before_tax - corp_tax
         
-        # Calculate equity portion of mortgage payment
-        annual_equity = annual_mortgage_payment / 2
+        # Annual equity (principal) already calculated above using proper amortization
         
         # Calculate monthly cash flow (excluding equity) - same as main calculation
         monthly_cash_flow = (net_income_after_tax - annual_equity) / 12
@@ -409,8 +467,9 @@ def calculate_equity_and_return_analysis(property_price, loan_amount, mortgage_r
         # Track cumulative rental income and costs
         if year > 0:  # Start accumulating from year 1
             cumulative_rental += annual_rent_income
+            # Calculate actual interest for this year using proper amortization
             # Only subtract interest portion of mortgage payment, not principal (principal increases equity)
-            annual_interest = annual_mortgage_payment / 2  # Simplified: half interest, half principal
+            annual_interest, _ = calculate_annual_interest_principal(loan_amount, mortgage_rate, mortgage_term, year)
             cumulative_cost += annual_operating_costs + annual_interest
         
         # Calculate net return (equity + cumulative rental income - cumulative costs - initial investment)
@@ -483,8 +542,8 @@ total_acquisition = (
 
 # Use annuity formula for annual mortgage payment
 annual_mortgage_payment = mortgage_annual_payment(loan_amount, mortgage_interest_rate, mortgage_term_years)
-annual_interest = annual_mortgage_payment / 2
-annual_equity = annual_mortgage_payment / 2
+# Calculate actual first-year interest and principal using proper amortization
+annual_interest, annual_equity = calculate_first_year_interest_principal(loan_amount, mortgage_interest_rate, mortgage_term_years)
 
 if maintenance_method == "1% of property value":
     maintenance = property_price * 0.01
@@ -881,7 +940,8 @@ if property_price > 0 and property_appreciation_rate >= 0:
                     epc_certificate / 10 + (void_days / 365) * (monthly_rent * 12)
                 )
                 annual_mortgage_payment = mortgage_annual_payment(loan_amount, mortgage_interest_rate, mortgage_term_years)
-                annual_interest = annual_mortgage_payment / 2  # Simplified: half interest, half principal
+                # Calculate actual interest for this specific year using proper amortization
+                annual_interest, _ = calculate_annual_interest_principal(loan_amount, mortgage_interest_rate, mortgage_term_years, i)
                 annual_costs = annual_operating_costs + annual_interest
                 
                 annual_return = (curr_equity - prev_equity) + annual_rental - annual_costs
@@ -938,7 +998,8 @@ if property_price > 0 and property_appreciation_rate >= 0:
                     epc_certificate / 10 + (void_days / 365) * (monthly_rent * 12)
                 )
                 annual_mortgage_payment = mortgage_annual_payment(loan_amount, mortgage_interest_rate, mortgage_term_years)
-                annual_interest = annual_mortgage_payment / 2  # Simplified: half interest, half principal
+                # Calculate actual interest for this specific year using proper amortization
+                annual_interest, _ = calculate_annual_interest_principal(loan_amount, mortgage_interest_rate, mortgage_term_years, i)
                 annual_costs = annual_operating_costs + annual_interest
                 
                 amount = (curr_equity - prev_equity) + annual_rental - annual_costs
