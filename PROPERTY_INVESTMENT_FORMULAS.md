@@ -24,6 +24,8 @@ The calculator evaluates buy-to-let property investments by:
 3. Analyzing cash flow and break-even occupancy
 4. Projecting equity growth with property appreciation
 
+**Important:** All mortgage interest and principal calculations use **accurate amortization formulas** based on outstanding loan balance, not simplified approximations. Early years correctly show higher interest costs (~70-80%) and lower principal (~20-30%), while later years show lower interest (~20-30%) and higher principal (~70-80%).
+
 ---
 
 ## Core Financial Metrics
@@ -37,13 +39,15 @@ Net Rental Yield = ((Net Income Before Tax + Annual Equity) / Property Price) ×
 
 **Breakdown:**
 - **Net Income Before Tax** = Annual Rent - Operating Costs - Mortgage Interest
-- **Annual Equity** = Portion of mortgage payment that pays down principal (estimated as 50% of total payment)
+- **Annual Equity** = Principal portion of mortgage payment (calculated using accurate amortization)
 - **Property Price** = Purchase price of the property
 
 **Why include equity?** Equity paydown is considered part of the return because it increases your ownership stake in the property.
 
-**Calculation (lines 155-183):**
+**Calculation (lines 215-241):**
 ```python
+# Calculate actual first-year interest and principal using proper amortization
+annual_interest_fp, annual_equity_fp = calculate_first_year_interest_principal(loan_amount_fp, mortgage_interest_rate, mortgage_term_years)
 net_income_before_tax = annual_rent - (annual_operating_costs + annual_interest)
 net_income_before_tax_with_equity = net_income_before_tax + annual_equity
 net_rental_yield = (net_income_before_tax_with_equity / property_price) × 100
@@ -65,8 +69,10 @@ Cash-on-Cash Return = ((Net Income After Tax + Annual Equity) / Total Upfront In
 
 **Key Difference from Yield:** Uses actual cash invested (not property value) as denominator, making it more relevant for investors using leverage.
 
-**Calculation (lines 185-228):**
+**Calculation (lines 243-285):**
 ```python
+# Calculate actual first-year interest and principal using proper amortization
+annual_interest_fp, annual_equity_fp = calculate_first_year_interest_principal(loan_amount_fp, mortgage_interest_rate, mortgage_term_years)
 taxable_profit = net_income_before_tax  # Rent - Operating Costs - Interest
 corp_tax = calculate_corporation_tax(max(0, taxable_profit))
 net_income_after_tax = net_income_before_tax - corp_tax
@@ -85,9 +91,10 @@ Monthly Net Cash Flow = (Net Income After Tax - Annual Equity) / 12
 
 **Why subtract equity?** Principal payments reduce available cash, even though they increase equity. This metric shows actual cash retained each month.
 
-**Calculation (line 518):**
+**Calculation (line 577):**
 ```python
-monthly_net_cash_flow = (net_income_after_tax - annual_equity) / 12
+net_income_after_tax_excluding_equity = net_income_after_tax - annual_equity
+monthly_net_cash_flow = net_income_after_tax_excluding_equity / 12
 ```
 
 ---
@@ -101,7 +108,7 @@ Break-even Occupancy = ((Annual Operating Costs + Annual Interest) / Annual Rent
 
 Minimum occupancy percentage needed to cover all costs (excluding principal repayment).
 
-**Calculation (line 519):**
+**Calculation (line 578):**
 ```python
 break_even_occupancy = ((annual_operating_costs + annual_interest) / annual_rent) × 100
 ```
@@ -119,12 +126,12 @@ The calculator tracks several return metrics over the mortgage term to analyze i
 Equity = Current Property Value - Remaining Mortgage Balance
 ```
 
-**Property Value with Appreciation (line 397):**
+**Property Value with Appreciation (line 455):**
 ```
 Current Property Value = Initial Price × (1 + appreciation_rate/100)^years
 ```
 
-**Remaining Mortgage Balance (lines 344-360):**
+**Remaining Mortgage Balance (lines 402-418):**
 ```
 Remaining Balance = Monthly Payment × ((1 - (1 + r)^(-months_remaining)) / r)
 ```
@@ -139,7 +146,7 @@ Uses the present value of annuity formula (backward calculation from remaining p
 
 ### 2. Simple Return Percentage
 
-**Formula (line 407):**
+**Formula (line 465):**
 ```
 Return % = ((Current Equity - Initial Investment) / Initial Investment) × 100%
 ```
@@ -150,7 +157,7 @@ Return % = ((Current Equity - Initial Investment) / Initial Investment) × 100%
 
 ### 3. Net Return Percentage (Primary Metric)
 
-**Formula (line 418):**
+**Formula (line 477):**
 ```
 Net Return % = ((Equity + Cumulative Rental Income - Cumulative Costs - Initial Investment) / Initial Investment) × 100%
 ```
@@ -180,7 +187,7 @@ net_return_percentage = (net_return / total_acquisition_cost) × 100
 
 ### 4. First Year Return Rate
 
-**Formula (lines 861-866):**
+**Formula (lines 920-925):**
 ```
 First Year Return = (First Year Equity + First Year Rental - First Year Costs - Initial Investment) / Initial Investment × 100%
 ```
@@ -194,7 +201,7 @@ First Year Return = (First Year Equity + First Year Rental - First Year Costs - 
 
 ### 5. Year-over-Year Return Rate
 
-**Formula (lines 868-888):**
+**Formula (lines 927-948):**
 ```
 Annual Return Rate = ((Current Equity - Previous Equity) + Annual Rental - Annual Costs) / Previous Equity × 100%
 ```
@@ -211,7 +218,7 @@ Annual Return Rate = ((Current Equity - Previous Equity) + Annual Rental - Annua
 
 ### 6. Annualized Return (CAGR)
 
-**Formula (line 767):**
+**Formula (line 826):**
 ```
 Annualized Return = ((Final Equity / Initial Investment)^(1/Years) - 1) × 100%
 ```
@@ -248,7 +255,7 @@ The correct approach uses the **total ending value** (Final Equity), not just th
 
 ### Operating Costs
 
-**Formula (lines 176-179, 210-213):**
+**Formula (lines 234-237, 268-271):**
 ```
 Annual Operating Costs = 
     Service Charge 
@@ -274,7 +281,7 @@ Accounts for periods when the property is unoccupied and not generating rent.
 
 ### Total Acquisition Cost
 
-**Formula (lines 480-482):**
+**Formula (lines 539-541):**
 ```
 Total Acquisition = 
     Deposit (25% of property price)
@@ -399,20 +406,21 @@ This calculates how much principal is still owed after a certain number of years
 
 The calculator finds the maximum price you should pay to achieve your target yield or cash-on-cash return.
 
-### Algorithm (lines 304-342)
+### Algorithm (lines 362-400)
 
 **Binary Search Approach:**
 
-1. **Find Maximum Viable Price** (lines 230-247):
+1. **Find Maximum Viable Price** (lines 287-305):
    - Ensures Annual Rent > Annual Mortgage Payment
    - Uses binary search between £50k and £2M
    - Finds highest price where rent covers mortgage
 
-2. **Apply Cash Flow Constraint** (if enabled, lines 249-302):
+2. **Apply Cash Flow Constraint** (if enabled, lines 307-360):
    - Finds lowest price that satisfies maximum monthly cash flow
    - Ensures monthly net cash flow ≤ maximum allowed
+   - Uses accurate first-year amortization for interest/principal calculation
 
-3. **Find Target Price** (lines 324-342):
+3. **Find Target Price** (lines 381-400):
    - Binary search between £50k and maximum viable price
    - Calculates yield/return for each test price
    - Adjusts price until computed value matches target (within tolerance)
@@ -579,23 +587,30 @@ The calculator finds the maximum price you should pay to achieve your target yie
 
 3. **Actual Amortization Split (First Year):**
    ```
-   # Using calculate_first_year_interest_principal()
+   # Using calculate_first_year_interest_principal(£225,000, 4.5%, 25)
+   # Calculates actual monthly amortization:
+   # - Monthly payment ≈ £1,350
+   # - First month: Interest = £225,000 × 0.00375 = £843.75
+   # - First month: Principal = £1,350 - £843.75 = £506.25
+   # ... continues for 12 months ...
    Annual Interest ≈ £10,080 (62% - typical for first year)
    Annual Principal ≈ £6,120 (38% - typical for first year)
    ```
-   *Note: Actual values depend on interest rate. Early years have higher interest percentage.*
+   *Note: Actual values depend on interest rate. Early years have higher interest percentage due to larger outstanding balance.*
 
 4. **Net Income Before Tax:**
    ```
    Annual Rent = £1,500 × 12 = £18,000
-   Net Income = £18,000 - £3,000 - £8,100 = £6,900
+   Net Income = £18,000 - £3,000 - £10,080 = £4,920
    ```
+   *Note: Using actual first-year interest of £10,080 instead of simplified £8,100*
 
 5. **Net Rental Yield:**
    ```
-   Net Income with Equity = £6,900 + £8,100 = £15,000
-   Yield = (£15,000 / £300,000) × 100 = 5.0%
+   Net Income with Equity = £4,920 + £6,120 = £11,040
+   Yield = (£11,040 / £300,000) × 100 = 3.68%
    ```
+   *Note: This is more accurate than the simplified calculation, showing lower yield due to higher interest costs in early years.*
 
 6. **If Target is 3%:** Calculator would search for a price around £500,000 to achieve 3% yield (lower yield = higher price for same income).
 
