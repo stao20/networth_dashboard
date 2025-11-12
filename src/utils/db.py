@@ -5,6 +5,7 @@ import streamlit as st
 
 import pandas as pd
 import sqlite3
+import json
 from supabase import create_client
 
 
@@ -303,4 +304,114 @@ class SupabaseHandler(DatabaseHandler):
             self.supabase.table("account_values").delete().eq("date", date).in_("account_id", account_ids).execute()
         except Exception as e:
             logging.error(f"Error in delete_entries_by_date: {str(e)}")
+            raise
+
+    def save_simulation_report(self, user_id: str, name: str, report_data: dict) -> dict:
+        """Save or update a simulation report"""
+        try:
+            # Serialize report_data to JSON string
+            report_json = json.dumps(report_data)
+            
+            # Check if report with same name exists for this user
+            existing = self.supabase.table("simulation_reports") \
+                .select("id") \
+                .eq("user_id", user_id) \
+                .eq("name", name) \
+                .execute()
+            
+            if existing.data:
+                # Update existing report
+                response = self.supabase.table("simulation_reports") \
+                    .update({
+                        "report_data": report_json,
+                        "updated_at": "now()"
+                    }) \
+                    .eq("id", existing.data[0]["id"]) \
+                    .execute()
+            else:
+                # Insert new report
+                response = self.supabase.table("simulation_reports") \
+                    .insert({
+                        "user_id": user_id,
+                        "name": name,
+                        "report_data": report_json
+                    }) \
+                    .execute()
+            
+            return response.data[0] if response.data else None
+        except Exception as e:
+            logging.error(f"Error in save_simulation_report: {str(e)}")
+            raise
+
+    def get_user_simulation_reports(self, user_id: str) -> list:
+        """Get all simulation reports for a user (metadata only)"""
+        try:
+            response = self.supabase.table("simulation_reports") \
+                .select("id, name, created_at, updated_at") \
+                .eq("user_id", user_id) \
+                .order("created_at", desc=True) \
+                .execute()
+            
+            return response.data if response.data else []
+        except Exception as e:
+            logging.error(f"Error in get_user_simulation_reports: {str(e)}")
+            return []
+
+    def load_simulation_report(self, report_id: str, user_id: str) -> dict:
+        """Load a full simulation report with data"""
+        try:
+            response = self.supabase.table("simulation_reports") \
+                .select("*") \
+                .eq("id", report_id) \
+                .eq("user_id", user_id) \
+                .single() \
+                .execute()
+            
+            if not response.data:
+                raise ValueError("Report not found or access denied")
+            
+            # Deserialize report_data from JSON
+            report = response.data
+            report["report_data"] = json.loads(report["report_data"])
+            
+            return report
+        except Exception as e:
+            logging.error(f"Error in load_simulation_report: {str(e)}")
+            raise
+
+    def delete_simulation_report(self, report_id: str, user_id: str):
+        """Delete a simulation report"""
+        try:
+            # Verify ownership before deleting
+            response = self.supabase.table("simulation_reports") \
+                .delete() \
+                .eq("id", report_id) \
+                .eq("user_id", user_id) \
+                .execute()
+            
+            if not response.data:
+                raise ValueError("Report not found or access denied")
+        except Exception as e:
+            logging.error(f"Error in delete_simulation_report: {str(e)}")
+            raise
+
+    def rename_simulation_report(self, report_id: str, user_id: str, new_name: str) -> dict:
+        """Rename a simulation report"""
+        try:
+            # Update report name, verifying ownership
+            response = self.supabase.table("simulation_reports") \
+                .update({
+                    "name": new_name,
+                    "updated_at": "now()"
+                }) \
+                .eq("id", report_id) \
+                .eq("user_id", user_id) \
+                .execute()
+            
+            if not response.data:
+                raise ValueError("Report not found or access denied")
+            
+            return response.data[0]
+        except Exception as e:
+            logging.error(f"Error in rename_simulation_report: {str(e)}")
             raise

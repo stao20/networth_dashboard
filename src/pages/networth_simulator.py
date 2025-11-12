@@ -3,14 +3,75 @@ import numpy as np
 import plotly.graph_objs as go
 from utils.models import Pot
 from datetime import datetime
+from config import Config
+from utils.auth import GoogleAuth
 
-st.title('Net Worth Simulator')
+# Initialize handlers
+db_handler = Config.DB_HANDLER
+auth = GoogleAuth()
+
+# Set page config
+st.set_page_config(layout="wide", page_title="Net Worth Simulator")
+
+# Custom CSS for compact sidebar
+st.markdown("""
+    <style>
+    /* Compact sidebar styling */
+    [data-testid="stSidebar"] {
+        padding-top: 2rem;
+    }
+    
+    /* Reduce spacing in sidebar */
+    [data-testid="stSidebar"] .element-container {
+        margin-bottom: 0.5rem;
+    }
+    
+    /* Compact dividers */
+    [data-testid="stSidebar"] hr {
+        margin: 0.5rem 0;
+    }
+    
+    /* Compact form spacing */
+    [data-testid="stSidebar"] .stForm {
+        margin-bottom: 0.5rem;
+    }
+    
+    /* Reduce button padding */
+    [data-testid="stSidebar"] button {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.875rem;
+    }
+    
+    /* Compact popover buttons */
+    [data-testid="stSidebar"] [data-testid="stPopover"] button {
+        padding: 0.35rem 0.75rem;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# Authentication
+st.title(
+    "Net Worth Simulator"
+    + (" :money_with_wings:" if Config.is_prod() else " :dollar:")
+)
+
+user_info = auth.login_button()
+
+if not user_info:
+    st.warning("Please log in to access the net worth simulator.")
+    st.stop()
+
+user_id, user_email, user_name = user_info
+db_handler.get_or_create_user(user_id, user_email, user_name)
 
 if 'pots' not in st.session_state:
     st.session_state.pots = []
     
 if 'contribution_types' not in st.session_state:
     st.session_state.contribution_types = {}
+
+if 'saved_reports' not in st.session_state:
+    st.session_state.saved_reports = []
 
 def add_pot():
     new_pot = Pot(name=f"Pot {len(st.session_state.pots) + 1}")
@@ -98,6 +159,190 @@ def simulate_net_worth(years=30):
         total_networth += networth_for_pot
         pot_breakdown[pot_item.name] = networth_for_pot
     return timeline, total_networth, pot_breakdown
+
+def serialize_simulation_data(years):
+    """Serialize the current simulation state"""
+    if not st.session_state.pots:
+        return None
+    
+    # Run simulation to get data
+    timeline, total_networth, pot_breakdown = simulate_net_worth(years=years)
+    
+    # Serialize pots
+    pots_data = [{
+        "name": pot.name,
+        "initial": pot.initial,
+        "monthly": pot.monthly,
+        "rate": pot.rate
+    } for pot in st.session_state.pots]
+    
+    # Serialize pot breakdown (convert numpy arrays to lists)
+    pot_breakdown_serialized = {
+        name: data.tolist() if hasattr(data, 'tolist') else list(data)
+        for name, data in pot_breakdown.items()
+    }
+    
+    return {
+        "pots": pots_data,
+        "contribution_types": st.session_state.contribution_types,
+        "simulation_years": years,
+        "selected_pots": st.session_state.get("selected_pots", [pot.name for pot in st.session_state.pots]),
+        "simulation_data": {
+            "timeline": timeline.tolist() if hasattr(timeline, 'tolist') else list(timeline),
+            "total_networth": total_networth.tolist() if hasattr(total_networth, 'tolist') else list(total_networth),
+            "pot_breakdown": pot_breakdown_serialized
+        }
+    }
+
+def load_simulation_data(report_data):
+    """Load simulation state from report data"""
+    # Clear existing pots
+    st.session_state.pots = []
+    st.session_state.contribution_types = {}
+    
+    # Load pots
+    for pot_data in report_data.get("pots", []):
+        pot = Pot(
+            name=pot_data["name"],
+            initial=pot_data["initial"],
+            monthly=pot_data["monthly"],
+            rate=pot_data["rate"]
+        )
+        st.session_state.pots.append(pot)
+    
+    # Load contribution types
+    st.session_state.contribution_types = report_data.get("contribution_types", {})
+    
+    # Load simulation settings
+    if "simulation_years" in report_data:
+        st.session_state.simulation_years = report_data["simulation_years"]
+    
+    if "selected_pots" in report_data:
+        st.session_state.selected_pots = report_data["selected_pots"]
+
+def load_saved_reports():
+    """Load list of saved reports for the current user"""
+    st.session_state.saved_reports = db_handler.get_user_simulation_reports(user_id)
+
+# Sidebar for managing saved simulations
+with st.sidebar:
+    st.write(f"Welcome, {user_name}!")
+    
+    if st.button("Logout"):
+        auth.logout()
+    
+    st.divider()
+    
+    # Save current simulation section
+    st.subheader("💾 Save Current Simulation")
+    with st.form("save_simulation_form"):
+        report_name = st.text_input("Simulation Name", placeholder="e.g., Retirement Plan 2025")
+        save_button = st.form_submit_button("Save Simulation")
+        
+        if save_button:
+            if not report_name:
+                st.error("Please enter a name for the simulation.")
+            elif not st.session_state.pots:
+                st.error("Please add at least one pot before saving.")
+            else:
+                try:
+                    # Get current simulation years (default to 30 if not set)
+                    years = st.session_state.get("simulation_years", 30)
+                    report_data = serialize_simulation_data(years)
+                    
+                    if report_data:
+                        db_handler.save_simulation_report(user_id, report_name, report_data)
+                        st.success(f"✅ Simulation '{report_name}' saved successfully!")
+                        load_saved_reports()  # Refresh the list
+                    else:
+                        st.error("Failed to serialize simulation data.")
+                except Exception as e:
+                    st.error(f"Error saving simulation: {str(e)}")
+    
+    st.divider()
+    
+    # Load saved simulations section with inline refresh button
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.subheader("📂 Saved Simulations")
+    with col2:
+        if st.button("🔄", key="refresh_reports", help="Refresh List"):
+            load_saved_reports()
+    
+    # Load reports on first run
+    if not st.session_state.saved_reports:
+        load_saved_reports()
+    
+    if st.session_state.saved_reports:
+        for idx, report in enumerate(st.session_state.saved_reports):
+            report_name = report["name"]
+            report_id = report["id"]
+            created_at = report.get("created_at", "Unknown")
+            
+            # Main container for each report - more compact layout
+            col1, col2 = st.columns([4, 1])
+            
+            with col1:
+                # Display report name and date on same line
+                st.markdown(f"**{report_name}**")
+                st.caption(f"{created_at[:10] if created_at != 'Unknown' else 'Unknown'}", help="Created date")
+            
+            with col2:
+                # Use popover for actions menu
+                with st.popover("⋮", use_container_width=True):
+                    # Load action
+                    if st.button("📥 Load", key=f"load_{report_id}", use_container_width=True):
+                        try:
+                            loaded_report = db_handler.load_simulation_report(report_id, user_id)
+                            load_simulation_data(loaded_report["report_data"])
+                            st.success(f"✅ Loaded '{report_name}'")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error loading: {str(e)}")
+                    
+                    # Rename action
+                    if st.button("✏️ Rename", key=f"rename_btn_{report_id}", use_container_width=True):
+                        st.session_state[f"renaming_{report_id}"] = True
+                        st.rerun()
+                    
+                    # Delete action (styled in red)
+                    if st.button("🗑️ Delete", key=f"delete_{report_id}", use_container_width=True, type="secondary"):
+                        try:
+                            db_handler.delete_simulation_report(report_id, user_id)
+                            st.success(f"✅ Deleted '{report_name}'")
+                            load_saved_reports()
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error deleting: {str(e)}")
+            
+            # Show rename input if in rename mode
+            if st.session_state.get(f"renaming_{report_id}", False):
+                with st.form(key=f"rename_form_{report_id}"):
+                    new_name = st.text_input("New name:", value=report_name, key=f"new_name_{report_id}", label_visibility="collapsed")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.form_submit_button("✓", use_container_width=True):
+                            if new_name and new_name != report_name:
+                                try:
+                                    db_handler.rename_simulation_report(report_id, user_id, new_name)
+                                    st.success(f"✅ Renamed")
+                                    st.session_state[f"renaming_{report_id}"] = False
+                                    load_saved_reports()
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Error: {str(e)}")
+                            else:
+                                st.session_state[f"renaming_{report_id}"] = False
+                                st.rerun()
+                    with col2:
+                        if st.form_submit_button("✗", use_container_width=True):
+                            st.session_state[f"renaming_{report_id}"] = False
+                            st.rerun()
+            
+            # Thin divider
+            st.markdown("<hr style='margin: 0.3rem 0; border-top: 1px solid #e0e0e0;'>", unsafe_allow_html=True)
+    else:
+        st.info("No saved simulations yet. Save your first one above!")
 
 if not st.session_state.pots:
     st.warning("Please add at least one pot to simulate.")

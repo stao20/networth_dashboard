@@ -38,3 +38,12 @@ class Pot:
     initial: float = 0.0
     monthly: float = 0.0
     rate: float = 0.0
+
+@dataclass
+class SimulationReport:
+    id: Optional[str]
+    user_id: str
+    name: str
+    report_data: dict
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
