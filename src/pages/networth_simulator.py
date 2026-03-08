@@ -1,5 +1,6 @@
 import streamlit as st
 import numpy as np
+import pandas as pd
 import plotly.graph_objs as go
 from utils.models import Pot
 from datetime import datetime
@@ -73,6 +74,9 @@ if 'contribution_types' not in st.session_state:
 if 'saved_reports' not in st.session_state:
     st.session_state.saved_reports = []
 
+if 'simulation_start_date' not in st.session_state:
+    st.session_state.simulation_start_date = datetime.now().date()
+
 def add_pot():
     new_pot = Pot(name=f"Pot {len(st.session_state.pots) + 1}")
     st.session_state.pots.append(new_pot)
@@ -137,7 +141,7 @@ col1, col2, col3 = st.columns([1, 1, 1])
 with col2:
     st.button('Add Pot', on_click=add_pot, use_container_width=True)
 
-def simulate_net_worth(years=30):
+def simulate_net_worth(years=30, start_date=None):
     months = years * 12
     timeline = np.arange(months)
     total_networth = np.zeros(months)
@@ -158,15 +162,24 @@ def simulate_net_worth(years=30):
         networth_for_pot = growth + contributions
         total_networth += networth_for_pot
         pot_breakdown[pot_item.name] = networth_for_pot
-    return timeline, total_networth, pot_breakdown
 
-def serialize_simulation_data(years):
+    # Build date series (month-end frequency to match simulation logic: balance at end of each month)
+    if start_date is None:
+        start_date = datetime.now().date()
+    date_series = pd.date_range(start=start_date, periods=months, freq='ME')
+
+    return timeline, total_networth, pot_breakdown, date_series
+
+def serialize_simulation_data(years, start_date=None):
     """Serialize the current simulation state"""
     if not st.session_state.pots:
         return None
-    
+
+    if start_date is None:
+        start_date = st.session_state.get("simulation_start_date", datetime.now().date())
+
     # Run simulation to get data
-    timeline, total_networth, pot_breakdown = simulate_net_worth(years=years)
+    timeline, total_networth, pot_breakdown, _ = simulate_net_worth(years=years, start_date=start_date)
     
     # Serialize pots
     pots_data = [{
@@ -186,6 +199,7 @@ def serialize_simulation_data(years):
         "pots": pots_data,
         "contribution_types": st.session_state.contribution_types,
         "simulation_years": years,
+        "start_date": start_date.isoformat(),
         "selected_pots": st.session_state.get("selected_pots", [pot.name for pot in st.session_state.pots]),
         "simulation_data": {
             "timeline": timeline.tolist() if hasattr(timeline, 'tolist') else list(timeline),
@@ -194,12 +208,31 @@ def serialize_simulation_data(years):
         }
     }
 
-def load_simulation_data(report_data):
-    """Load simulation state from report data"""
+def load_simulation_data(loaded_report):
+    """Load simulation state from report data. Accepts full loaded_report to access created_at for start_date."""
+    report_data = loaded_report["report_data"] if "report_data" in loaded_report else loaded_report
+
+    # Start date: use created_at when loading from DB, otherwise default to today
+    created_at = loaded_report.get("created_at") if isinstance(loaded_report, dict) else None
+    if created_at:
+        try:
+            st.session_state.simulation_start_date = datetime.fromisoformat(str(created_at).replace("Z", "+00:00")).date()
+        except (ValueError, TypeError):
+            st.session_state.simulation_start_date = datetime.now().date()
+    else:
+        start_date_str = report_data.get("start_date") if isinstance(report_data, dict) else None
+        if start_date_str:
+            try:
+                st.session_state.simulation_start_date = datetime.fromisoformat(start_date_str).date()
+            except (ValueError, TypeError):
+                st.session_state.simulation_start_date = datetime.now().date()
+        else:
+            st.session_state.simulation_start_date = datetime.now().date()
+
     # Clear existing pots
     st.session_state.pots = []
     st.session_state.contribution_types = {}
-    
+
     # Load pots
     for pot_data in report_data.get("pots", []):
         pot = Pot(
@@ -246,9 +279,10 @@ with st.sidebar:
                 st.error("Please add at least one pot before saving.")
             else:
                 try:
-                    # Get current simulation years (default to 30 if not set)
+                    # Get current simulation years and start date
                     years = st.session_state.get("simulation_years", 30)
-                    report_data = serialize_simulation_data(years)
+                    start_date = st.session_state.get("simulation_start_date", datetime.now().date())
+                    report_data = serialize_simulation_data(years, start_date=start_date)
                     
                     if report_data:
                         db_handler.save_simulation_report(user_id, report_name, report_data)
@@ -294,7 +328,7 @@ with st.sidebar:
                     if st.button("📥 Load", key=f"load_{report_id}", use_container_width=True):
                         try:
                             loaded_report = db_handler.load_simulation_report(report_id, user_id)
-                            load_simulation_data(loaded_report["report_data"])
+                            load_simulation_data(loaded_report)
                             st.success(f"✅ Loaded '{report_name}'")
                             st.rerun()
                         except Exception as e:
@@ -348,6 +382,11 @@ if not st.session_state.pots:
     st.warning("Please add at least one pot to simulate.")
 else:
     st.write("### Simulation Settings")
+    start_date = st.date_input(
+        "Simulation Start Date",
+        value=st.session_state.simulation_start_date,
+        key="simulation_start_date"
+    )
     years = st.slider("Simulation Period (Years)", min_value=1, max_value=50, value=30, key="simulation_years")
     
     # Add pot selection
@@ -359,17 +398,17 @@ else:
     )
     
     if selected_pots:
-        timeline, networth_result, pot_breakdown = simulate_net_worth(years=years)
-        
+        timeline, networth_result, pot_breakdown, date_series = simulate_net_worth(years=years, start_date=start_date)
+
         filtered_pot_breakdown = {name: data for name, data in pot_breakdown.items() if name in selected_pots}
         filtered_networth = sum(filtered_pot_breakdown.values())
-        
+
         # Total Net Worth Plot
         fig_total = go.Figure()
         fig_total.add_trace(go.Scatter(
-            x=timeline / 12, 
-            y=filtered_networth, 
-            mode='lines', 
+            x=date_series,
+            y=filtered_networth,
+            mode='lines',
             name='Total Net Worth',
             line=dict(color='#2E86AB', width=3),
             fill='tonexty'
@@ -379,9 +418,9 @@ else:
                 text='Total Net Worth Growth Over Time',
                 font=dict(size=20, color='#1a1a1a')
             ),
-            xaxis_title='Years',
+            xaxis_title='Date',
             yaxis_title='Net Worth',
-            xaxis=dict(range=[0, years]),
+            xaxis=dict(range=[date_series[0], date_series[-1]], tickformat='%b %Y'),
             plot_bgcolor='#f8f9fa',
             paper_bgcolor='white',
             font=dict(color='#333333'),
@@ -398,23 +437,23 @@ else:
         for i, (name, data) in enumerate(filtered_pot_breakdown.items()):
             color = colors[i % len(colors)]
             fig_breakdown.add_trace(go.Scatter(
-                x=timeline / 12, 
-                y=data, 
-                mode='lines', 
+                x=date_series,
+                y=data,
+                mode='lines',
                 name=name,
                 line=dict(color=color, width=2.5),
                 fill='tonexty' if i == 0 else None
             ))
-        
+
         fig_breakdown.update_layout(
             title=dict(
                 text='Net Worth Breakdown by Pot',
                 font=dict(size=20, color='#1a1a1a')
             ),
-            xaxis_title='Years',
+            xaxis_title='Date',
             yaxis_title='Net Worth',
             showlegend=True,
-            xaxis=dict(range=[0, years]),
+            xaxis=dict(range=[date_series[0], date_series[-1]], tickformat='%b %Y'),
             plot_bgcolor='#f8f9fa',
             paper_bgcolor='white',
             font=dict(color='#333333'),
@@ -633,8 +672,8 @@ else:
                         <h2>📊 Simulation Overview</h2>
                         <div class="summary-stats">
                             <div class="stat-card">
-                                <h3>{years}</h3>
-                                <p>Years Simulated</p>
+                                <h3>{start_date.strftime('%Y-%m')} to {date_series[-1].strftime('%Y-%m')}</h3>
+                                <p>Simulation Period</p>
                             </div>
                             <div class="stat-card">
                                 <h3>{len(selected_pots)}</h3>
