@@ -65,6 +65,9 @@ if not user_info:
 user_id, user_email, user_name = user_info
 db_handler.get_or_create_user(user_id, user_email, user_name)
 
+if "import_success_msg" in st.session_state:
+    st.success(st.session_state.pop("import_success_msg"))
+
 if 'pots' not in st.session_state:
     st.session_state.pots = []
     
@@ -76,6 +79,22 @@ if 'saved_reports' not in st.session_state:
 
 if 'simulation_start_date' not in st.session_state:
     st.session_state.simulation_start_date = datetime.now().date()
+
+if "show_import" not in st.session_state:
+    st.session_state.show_import = False
+
+
+def _unique_pot_name(desired: str, names_in_use: set[str]) -> str:
+    """Return a pot name that is not in names_in_use, appending (imported) if needed."""
+    if desired not in names_in_use:
+        return desired
+    candidate = f"{desired} (imported)"
+    n = 2
+    while candidate in names_in_use:
+        candidate = f"{desired} (imported) {n}"
+        n += 1
+    return candidate
+
 
 def add_pot():
     new_pot = Pot(name=f"Pot {len(st.session_state.pots) + 1}")
@@ -137,9 +156,102 @@ for i, pot in enumerate(st.session_state.pots):
     
     st.divider()
 
+_tracker_df = db_handler.load_account_data(user_id)
+has_tracker_data = not _tracker_df.empty
+
 col1, col2, col3 = st.columns([1, 1, 1])
-with col2:
-    st.button('Add Pot', on_click=add_pot, use_container_width=True)
+with col1:
+    st.button("Add Pot", on_click=add_pot, use_container_width=True)
+with col3:
+    import_clicked = st.button(
+        "Import from Tracker",
+        use_container_width=True,
+        disabled=not has_tracker_data,
+        help=(
+            "Add accounts and values in Net Worth Tracker first"
+            if not has_tracker_data
+            else None
+        ),
+    )
+    if import_clicked and has_tracker_data:
+        st.session_state.show_import = not st.session_state.show_import
+
+if st.session_state.show_import and has_tracker_data:
+    with st.container():
+        st.subheader("Import from Tracker")
+        group_by = st.radio(
+            "Import granularity",
+            options=["category", "account"],
+            format_func=lambda x: (
+                "Group by Category" if x == "category" else "Individual Accounts"
+            ),
+            key="import_granularity",
+            horizontal=True,
+        )
+        rows = db_handler.get_latest_balances(user_id, group_by=group_by)
+        if not rows:
+            st.info(
+                "No account values in the tracker yet. Add data in Net Worth Tracker first."
+            )
+        else:
+            if group_by == "category":
+                preview_df = pd.DataFrame(
+                    [
+                        {"Name": r["name"], "Latest balance (£)": r["value"]}
+                        for r in rows
+                    ]
+                )
+            else:
+                preview_df = pd.DataFrame(
+                    [
+                        {
+                            "Account": r["name"],
+                            "Category": r["category_name"],
+                            "Latest balance (£)": r["value"],
+                        }
+                        for r in rows
+                    ]
+                )
+            st.dataframe(preview_df, use_container_width=True)
+
+            merge_strategy = st.radio(
+                "Merge strategy",
+                options=["replace", "append"],
+                format_func=lambda x: (
+                    "Replace all pots" if x == "replace" else "Add to existing pots"
+                ),
+                key="import_merge",
+            )
+
+            if st.button("Confirm import", type="primary", key="confirm_import"):
+                names_in_use = {p.name for p in st.session_state.pots}
+                if merge_strategy == "replace":
+                    st.session_state.pots = []
+                    st.session_state.contribution_types = {}
+                    names_in_use = set()
+
+                for row in rows:
+                    base_name = row["name"]
+                    final_name = _unique_pot_name(base_name, names_in_use)
+                    st.session_state.pots.append(
+                        Pot(
+                            name=final_name,
+                            initial=float(row["value"]),
+                            monthly=0.0,
+                            rate=0.0,
+                        )
+                    )
+                    st.session_state.contribution_types[final_name] = "Monthly"
+                    names_in_use.add(final_name)
+
+                st.session_state.show_import = False
+                st.session_state["import_success_msg"] = (
+                    f"Imported {len(rows)} pot(s) from tracker."
+                )
+                st.rerun()
+
+elif st.session_state.show_import and not has_tracker_data:
+    st.session_state.show_import = False
 
 def simulate_net_worth(years=30, start_date=None):
     months = years * 12

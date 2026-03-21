@@ -245,6 +245,51 @@ class SupabaseHandler(DatabaseHandler):
             logging.error(f"Error in load_account_data: {str(e)}")
             return pd.DataFrame()
 
+    def get_latest_balances(self, user_id: str, group_by: str = "category") -> list[dict]:
+        """Latest balance per account from tracker data, then grouped by category or listed per account.
+
+        group_by: \"category\" -> [{\"name\", \"value\"}] sums per category;
+                  \"account\" -> [{\"name\", \"category_name\", \"value\"}] one row per account.
+        """
+        try:
+            df = self.load_account_data(user_id)
+            if df.empty:
+                return []
+
+            latest = (
+                df.sort_values("date")
+                .groupby("account_name", as_index=False)
+                .last()
+            )
+
+            if group_by == "account":
+                rows = []
+                for _, row in latest.sort_values("account_name").iterrows():
+                    val = float(row["value"])
+                    if pd.isna(val):
+                        continue
+                    rows.append(
+                        {
+                            "name": row["account_name"],
+                            "category_name": row["category_name"],
+                            "value": val,
+                        }
+                    )
+                return rows
+
+            # group_by == "category"
+            by_cat = latest.groupby("category_name")["value"].sum()
+            rows = []
+            for cat_name in sorted(by_cat.index):
+                total = float(by_cat[cat_name])
+                if pd.isna(total):
+                    continue
+                rows.append({"name": cat_name, "value": total})
+            return rows
+        except Exception as e:
+            logging.error(f"Error in get_latest_balances: {str(e)}")
+            return []
+
     def save_account_value(self, account_id: str, date: str, value: float) -> dict:
         """Save or update an account value"""
         try:
