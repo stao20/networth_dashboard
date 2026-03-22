@@ -6,6 +6,7 @@ from utils.models import Pot
 from datetime import date, datetime
 from config import Config
 from utils.auth import GoogleAuth
+from utils.db import latest_balances_from_account_df
 
 # Initialize handlers
 db_handler = Config.DB_HANDLER
@@ -178,8 +179,8 @@ if st.session_state.show_import and has_tracker_data:
             key="import_granularity",
             horizontal=True,
         )
-        rows = db_handler.get_latest_balances(
-            user_id, group_by=group_by, as_of_date=import_as_of
+        rows = latest_balances_from_account_df(
+            _tracker_df, group_by=group_by, as_of_date=import_as_of
         )
         if not rows:
             st.info(

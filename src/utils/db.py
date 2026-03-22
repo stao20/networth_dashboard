@@ -10,6 +10,56 @@ import json
 from supabase import create_client
 
 
+def latest_balances_from_account_df(
+    df: pd.DataFrame,
+    group_by: str = "category",
+    as_of_date: date | None = None,
+) -> list[dict]:
+    """Compute simulator import rows from a tracker account_values DataFrame.
+
+    For each account, uses the latest row with date <= as_of_date (inclusive). If as_of_date is
+    None, uses the globally latest row per account.
+
+    group_by: \"category\" -> [{\"name\", \"value\"}]; \"account\" -> [{\"name\", \"category_name\", \"value\"}].
+    """
+    if df.empty:
+        return []
+
+    df = df.copy()
+    if as_of_date is not None:
+        df = df[df["date"] <= as_of_date]
+    if df.empty:
+        return []
+
+    latest = (
+        df.sort_values("date").groupby("account_name", as_index=False).last()
+    )
+
+    if group_by == "account":
+        rows = []
+        for _, row in latest.sort_values("account_name").iterrows():
+            val = float(row["value"])
+            if pd.isna(val):
+                continue
+            rows.append(
+                {
+                    "name": row["account_name"],
+                    "category_name": row["category_name"],
+                    "value": val,
+                }
+            )
+        return rows
+
+    by_cat = latest.groupby("category_name")["value"].sum()
+    rows = []
+    for cat_name in sorted(by_cat.index):
+        total = float(by_cat[cat_name])
+        if pd.isna(total):
+            continue
+        rows.append({"name": cat_name, "value": total})
+    return rows
+
+
 class DatabaseHandler(ABC):
     @abstractmethod
     def load_account_data(self):
@@ -252,54 +302,10 @@ class SupabaseHandler(DatabaseHandler):
         group_by: str = "category",
         as_of_date: date | None = None,
     ) -> list[dict]:
-        """Balance per account from tracker data, then grouped by category or listed per account.
-
-        For each account, uses the latest row with date <= as_of_date (inclusive). If as_of_date is
-        None, uses the globally latest row per account (no date cutoff).
-
-        group_by: \"category\" -> [{\"name\", \"value\"}] sums per category;
-                  \"account\" -> [{\"name\", \"category_name\", \"value\"}] one row per account.
-        """
+        """Balance per account from tracker data (delegates to latest_balances_from_account_df)."""
         try:
             df = self.load_account_data(user_id)
-            if df.empty:
-                return []
-
-            if as_of_date is not None:
-                df = df[df["date"] <= as_of_date]
-            if df.empty:
-                return []
-
-            latest = (
-                df.sort_values("date")
-                .groupby("account_name", as_index=False)
-                .last()
-            )
-
-            if group_by == "account":
-                rows = []
-                for _, row in latest.sort_values("account_name").iterrows():
-                    val = float(row["value"])
-                    if pd.isna(val):
-                        continue
-                    rows.append(
-                        {
-                            "name": row["account_name"],
-                            "category_name": row["category_name"],
-                            "value": val,
-                        }
-                    )
-                return rows
-
-            # group_by == "category"
-            by_cat = latest.groupby("category_name")["value"].sum()
-            rows = []
-            for cat_name in sorted(by_cat.index):
-                total = float(by_cat[cat_name])
-                if pd.isna(total):
-                    continue
-                rows.append({"name": cat_name, "value": total})
-            return rows
+            return latest_balances_from_account_df(df, group_by, as_of_date)
         except Exception as e:
             logging.error(f"Error in get_latest_balances: {str(e)}")
             return []
