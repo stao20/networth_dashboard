@@ -359,21 +359,29 @@ def serialize_simulation_data(years, start_date=None):
     }
 
 def load_simulation_data(loaded_report):
-    """Load simulation state from report data. Accepts full loaded_report to access created_at for start_date."""
+    """Load simulation state from report data.
+
+    Simulation start date comes from saved report JSON (start_date) when present — that is the
+    intended scenario start. Falls back to created_at for legacy saves without start_date, then today.
+    """
     report_data = loaded_report["report_data"] if "report_data" in loaded_report else loaded_report
 
-    # Start date: use created_at when loading from DB, otherwise default to today
-    created_at = loaded_report.get("created_at") if isinstance(loaded_report, dict) else None
-    if created_at:
+    start_date_str = report_data.get("start_date") if isinstance(report_data, dict) else None
+    if start_date_str:
         try:
-            st.session_state.simulation_start_date = datetime.fromisoformat(str(created_at).replace("Z", "+00:00")).date()
+            st.session_state.simulation_start_date = datetime.fromisoformat(
+                str(start_date_str).replace("Z", "+00:00")
+            ).date()
         except (ValueError, TypeError):
-            st.session_state.simulation_start_date = datetime.now().date()
-    else:
-        start_date_str = report_data.get("start_date") if isinstance(report_data, dict) else None
-        if start_date_str:
+            start_date_str = None
+
+    if not start_date_str:
+        created_at = loaded_report.get("created_at") if isinstance(loaded_report, dict) else None
+        if created_at:
             try:
-                st.session_state.simulation_start_date = datetime.fromisoformat(start_date_str).date()
+                st.session_state.simulation_start_date = datetime.fromisoformat(
+                    str(created_at).replace("Z", "+00:00")
+                ).date()
             except (ValueError, TypeError):
                 st.session_state.simulation_start_date = datetime.now().date()
         else:
