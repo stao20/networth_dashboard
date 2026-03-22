@@ -6,7 +6,7 @@ from utils.models import Pot
 from datetime import date, datetime
 from config import Config
 from utils.auth import GoogleAuth
-from utils.db import latest_balances_from_account_df
+from utils.tracker_balances import latest_balances_from_account_df
 
 # Initialize handlers
 db_handler = Config.DB_HANDLER
