@@ -41,7 +41,7 @@ ENV/
 *.db
 *.csv
 *.log
-.streamlit/secrets.toml
+.streamlit/
 .coverage
 htmlcov/
 .pytest_cache/

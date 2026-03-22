@@ -1,8 +1,0 @@
-# Worktrees do not share `.streamlit/secrets.toml` with the main clone.
-# Point at the main repo's secrets file so `uv run streamlit run ...` works from any worktree.
-# Override by adding a local `.streamlit/secrets.toml` (gitignored) or editing `files` below.
-# Docs: https://docs.streamlit.io/develop/api-reference/configuration/config.toml#secrets
-[secrets]
-files = [
-    "C:/Users/87489/Documents/Github/networth_dashboard/.streamlit/secrets.toml",
-]
