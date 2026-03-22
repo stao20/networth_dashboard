@@ -149,23 +149,18 @@ if has_tracker_data:
 if st.session_state.show_import and has_tracker_data:
     with st.container():
         st.subheader("Import from Tracker")
-        _raw_min = _tracker_df["date"].min()
-        _raw_max = _tracker_df["date"].max()
-        _min_d = _as_python_date(_raw_min)
-        _max_d = min(_as_python_date(_raw_max), date.today())
 
-        if "import_as_of_date" not in st.session_state:
-            st.session_state.import_as_of_date = _max_d
-        elif st.session_state.import_as_of_date < _min_d or st.session_state.import_as_of_date > _max_d:
-            st.session_state.import_as_of_date = _max_d
-
-        import_as_of = st.date_input(
-            "Import balances as of",
-            min_value=_min_d,
-            max_value=_max_d,
+        _available_dates = sorted(
+            {_as_python_date(d) for d in _tracker_df["date"].unique()},
+            reverse=True,
+        )
+        import_as_of = st.selectbox(
+            "Snapshot date",
+            options=_available_dates,
+            index=0,
             help=(
-                "Each account uses its latest value on or before this date. "
-                "Pick a past date to ignore newer entries (e.g. closed accounts)."
+                "Only accounts that have a value recorded on this exact date "
+                "will be imported. Inactive accounts (no entry on this date) are excluded."
             ),
             key="import_as_of_date",
         )
@@ -184,8 +179,8 @@ if st.session_state.show_import and has_tracker_data:
         )
         if not rows:
             st.info(
-                "No account values on or before this date. "
-                "Choose a later date or add data in Net Worth Tracker."
+                "No account values on this date. "
+                "Choose a different snapshot date."
             )
         else:
             _bal_label = f"Balance as of {import_as_of} (£)"

@@ -10,10 +10,10 @@ def latest_balances_from_account_df(
     group_by: str = "category",
     as_of_date: date | None = None,
 ) -> list[dict]:
-    """Compute simulator import rows from a tracker account_values DataFrame.
+    """Balances for accounts that have an entry on exactly as_of_date.
 
-    For each account, uses the latest row with date <= as_of_date (inclusive). If as_of_date is
-    None, uses the globally latest row per account.
+    Only accounts with a value recorded on the chosen date are included — inactive accounts
+    (no entry on that date) are excluded. If as_of_date is None, uses the latest date in the data.
 
     group_by: \"category\" -> [{\"name\", \"value\"}]; \"account\" -> [{\"name\", \"category_name\", \"value\"}].
     """
@@ -21,14 +21,13 @@ def latest_balances_from_account_df(
         return []
 
     df = df.copy()
-    if as_of_date is not None:
-        df = df[df["date"] <= as_of_date]
+    if as_of_date is None:
+        as_of_date = df["date"].max()
+    df = df[df["date"] == as_of_date]
     if df.empty:
         return []
 
-    latest = (
-        df.sort_values("date").groupby("account_name", as_index=False).last()
-    )
+    latest = df.drop_duplicates(subset=["account_name"], keep="last")
 
     if group_by == "account":
         rows = []
