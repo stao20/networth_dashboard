@@ -231,19 +231,24 @@ class SupabaseHandler(DatabaseHandler):
             for record in response.data:
                 account = record["accounts"]
                 category = account["categories"]
-                processed_data.append({
-                    "date": record["date"],
-                    "value": record["value"],
-                    "account_name": account["name"],
-                    "category_name": category["name"]
-                })
-            
+                processed_data.append(
+                    {
+                        "account_id": record["account_id"],
+                        "date": record["date"],
+                        "value": record["value"],
+                        "account_name": account["name"],
+                        "category_name": category["name"],
+                    }
+                )
+
             df = pd.DataFrame(processed_data)
             # Convert date strings to datetime
             df["date"] = pd.to_datetime(df["date"]).dt.date
             # Ensure value is numeric
             df["value"] = pd.to_numeric(df["value"])
-            return df
+            # One row per (account, date); nested embeds can occasionally duplicate rows
+            df = df.drop_duplicates(subset=["account_id", "date"], keep="last")
+            return df.drop(columns=["account_id"])
         except Exception as e:
             logging.error(f"Error in load_account_data: {str(e)}")
             return pd.DataFrame()

@@ -511,9 +511,10 @@ with tabs[2]:
     account_data = db_handler.load_account_data(user_id)
     
     if not account_data.empty:
+        # "fixed" = only rows from the DB (dynamic adds blank rows and looks like extra records)
         edited_df = st.data_editor(
             account_data,
-            num_rows="dynamic",
+            num_rows="fixed",
             column_config={
                 "value": st.column_config.NumberColumn(
                     "Value",
