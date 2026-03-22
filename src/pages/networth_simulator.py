@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objs as go
 from utils.models import Pot
-from datetime import datetime
+from datetime import date, datetime
 from config import Config
 from utils.auth import GoogleAuth
 
@@ -82,6 +82,15 @@ if 'simulation_start_date' not in st.session_state:
 
 if "show_import" not in st.session_state:
     st.session_state.show_import = False
+
+
+def _as_python_date(d) -> date:
+    """Normalize pandas/datetime to datetime.date."""
+    if isinstance(d, datetime):
+        return d.date()
+    if isinstance(d, pd.Timestamp):
+        return d.date()
+    return d
 
 
 def _unique_pot_name(desired: str, names_in_use: set[str]) -> str:
@@ -179,6 +188,27 @@ with col3:
 if st.session_state.show_import and has_tracker_data:
     with st.container():
         st.subheader("Import from Tracker")
+        _raw_min = _tracker_df["date"].min()
+        _raw_max = _tracker_df["date"].max()
+        _min_d = _as_python_date(_raw_min)
+        _max_d = min(_as_python_date(_raw_max), date.today())
+
+        if "import_as_of_date" not in st.session_state:
+            st.session_state.import_as_of_date = _max_d
+        elif st.session_state.import_as_of_date < _min_d or st.session_state.import_as_of_date > _max_d:
+            st.session_state.import_as_of_date = _max_d
+
+        import_as_of = st.date_input(
+            "Import balances as of",
+            min_value=_min_d,
+            max_value=_max_d,
+            help=(
+                "Each account uses its latest value on or before this date. "
+                "Pick a past date to ignore newer entries (e.g. closed accounts)."
+            ),
+            key="import_as_of_date",
+        )
+
         group_by = st.radio(
             "Import granularity",
             options=["category", "account"],
@@ -188,18 +218,19 @@ if st.session_state.show_import and has_tracker_data:
             key="import_granularity",
             horizontal=True,
         )
-        rows = db_handler.get_latest_balances(user_id, group_by=group_by)
+        rows = db_handler.get_latest_balances(
+            user_id, group_by=group_by, as_of_date=import_as_of
+        )
         if not rows:
             st.info(
-                "No account values in the tracker yet. Add data in Net Worth Tracker first."
+                "No account values on or before this date. "
+                "Choose a later date or add data in Net Worth Tracker."
             )
         else:
+            _bal_label = f"Balance as of {import_as_of} (£)"
             if group_by == "category":
                 preview_df = pd.DataFrame(
-                    [
-                        {"Name": r["name"], "Latest balance (£)": r["value"]}
-                        for r in rows
-                    ]
+                    [{"Name": r["name"], _bal_label: r["value"]} for r in rows]
                 )
             else:
                 preview_df = pd.DataFrame(
@@ -207,7 +238,7 @@ if st.session_state.show_import and has_tracker_data:
                         {
                             "Account": r["name"],
                             "Category": r["category_name"],
-                            "Latest balance (£)": r["value"],
+                            _bal_label: r["value"],
                         }
                         for r in rows
                     ]
@@ -246,7 +277,8 @@ if st.session_state.show_import and has_tracker_data:
 
                 st.session_state.show_import = False
                 st.session_state["import_success_msg"] = (
-                    f"Imported {len(rows)} pot(s) from tracker."
+                    f"Imported {len(rows)} pot(s) from tracker "
+                    f"(balances as of {import_as_of})."
                 )
                 st.rerun()
 

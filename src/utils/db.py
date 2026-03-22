@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from datetime import date
 import logging
 import os
 import streamlit as st
@@ -245,14 +246,27 @@ class SupabaseHandler(DatabaseHandler):
             logging.error(f"Error in load_account_data: {str(e)}")
             return pd.DataFrame()
 
-    def get_latest_balances(self, user_id: str, group_by: str = "category") -> list[dict]:
-        """Latest balance per account from tracker data, then grouped by category or listed per account.
+    def get_latest_balances(
+        self,
+        user_id: str,
+        group_by: str = "category",
+        as_of_date: date | None = None,
+    ) -> list[dict]:
+        """Balance per account from tracker data, then grouped by category or listed per account.
+
+        For each account, uses the latest row with date <= as_of_date (inclusive). If as_of_date is
+        None, uses the globally latest row per account (no date cutoff).
 
         group_by: \"category\" -> [{\"name\", \"value\"}] sums per category;
                   \"account\" -> [{\"name\", \"category_name\", \"value\"}] one row per account.
         """
         try:
             df = self.load_account_data(user_id)
+            if df.empty:
+                return []
+
+            if as_of_date is not None:
+                df = df[df["date"] <= as_of_date]
             if df.empty:
                 return []
 
