@@ -1,41 +1,12 @@
-import json
 import streamlit as st
 import numpy as np
 import pandas as pd
 import plotly.graph_objs as go
-from pathlib import Path
 from utils.models import Pot
 from datetime import date, datetime
 from config import Config
 from utils.auth import GoogleAuth
-from utils.tracker_balances import (
-    latest_balances_from_account_df,
-    normalize_tracker_date_for_compare,
-)
-
-# region agent log
-_SIM_DEBUG_LOG = Path(__file__).resolve().parents[2] / "debug-ac5b05.log"
-
-
-def _sim_agent_log(hypothesis_id: str, message: str, data: dict) -> None:
-    try:
-        line = json.dumps(
-            {
-                "sessionId": "ac5b05",
-                "hypothesisId": hypothesis_id,
-                "location": "networth_simulator.py:import",
-                "message": message,
-                "data": data,
-                "timestamp": int(__import__("time").time() * 1000),
-            }
-        )
-        with open(_SIM_DEBUG_LOG, "a", encoding="utf-8") as f:
-            f.write(line + "\n")
-    except OSError:
-        pass
-
-
-# endregion
+from utils.tracker_balances import latest_balances_from_account_df
 
 # Initialize handlers
 db_handler = Config.DB_HANDLER
@@ -112,11 +83,6 @@ if 'simulation_start_date' not in st.session_state:
 
 if "show_import" not in st.session_state:
     st.session_state.show_import = False
-
-# Avoid stale session value from old st.date_input(key="import_as_of_date") conflicting with selectbox
-if "_migration_import_snapshot_v1" not in st.session_state:
-    st.session_state.pop("import_as_of_date", None)
-    st.session_state["_migration_import_snapshot_v1"] = True
 
 
 def _as_python_date(d) -> date:
@@ -196,7 +162,7 @@ if st.session_state.show_import and has_tracker_data:
                 "Only accounts that have a value recorded on this exact date "
                 "will be imported. Inactive accounts (no entry on this date) are excluded."
             ),
-            key="import_snapshot_date",
+            key="import_as_of_date",
         )
 
         group_by = st.radio(
@@ -208,47 +174,26 @@ if st.session_state.show_import and has_tracker_data:
             key="import_granularity",
             horizontal=True,
         )
-        # region agent log
-        _n = _tracker_df["date"].map(normalize_tracker_date_for_compare)
-        _dbg_same_filter = _tracker_df[_n == normalize_tracker_date_for_compare(import_as_of)]
-        _sim_agent_log(
-            "H2",
-            "simulator before latest_balances_from_account_df",
-            {
-                "import_as_of_repr": repr(import_as_of),
-                "import_as_of_type": type(import_as_of).__name__,
-                "group_by": repr(group_by),
-                "tracker_shape": len(_tracker_df),
-                "rows_same_norm_date_as_debug": len(_dbg_same_filter),
-                "preview_rows_expected": len(_dbg_same_filter),
-            },
-        )
-        # endregion
-        rows = latest_balances_from_account_df(
-            _tracker_df, group_by=group_by, as_of_date=import_as_of
-        )
-        if not rows:
-            st.info(
-                "No account values on this date. "
-                "Choose a different snapshot date."
-            )
+        _filtered = _tracker_df[_tracker_df["date"] == import_as_of].copy()
+
+        if _filtered.empty:
+            st.info("No account values on this date. Choose a different snapshot date.")
         else:
             _bal_label = f"Balance as of {import_as_of} (£)"
             if group_by == "category":
-                preview_df = pd.DataFrame(
-                    [{"Name": r["name"], _bal_label: r["value"]} for r in rows]
-                )
+                _grouped = _filtered.groupby("category_name", as_index=False)["value"].sum()
+                preview_df = _grouped.rename(
+                    columns={"category_name": "Name", "value": _bal_label}
+                ).sort_values("Name")
             else:
-                preview_df = pd.DataFrame(
-                    [
-                        {
-                            "Account": r["name"],
-                            "Category": r["category_name"],
-                            _bal_label: r["value"],
-                        }
-                        for r in rows
-                    ]
-                )
+                preview_df = _filtered[["account_name", "category_name", "value"]].rename(
+                    columns={
+                        "account_name": "Account",
+                        "category_name": "Category",
+                        "value": _bal_label,
+                    }
+                ).sort_values("Account")
+
             st.dataframe(preview_df, use_container_width=True)
 
             merge_strategy = st.radio(
@@ -267,24 +212,29 @@ if st.session_state.show_import and has_tracker_data:
                     st.session_state.contribution_types = {}
                     names_in_use = set()
 
-                for row in rows:
-                    base_name = row["name"]
-                    final_name = _unique_pot_name(base_name, names_in_use)
-                    st.session_state.pots.append(
-                        Pot(
-                            name=final_name,
-                            initial=float(row["value"]),
-                            monthly=0.0,
-                            rate=0.0,
+                if group_by == "category":
+                    for _, r in preview_df.iterrows():
+                        base_name = r["Name"]
+                        final_name = _unique_pot_name(base_name, names_in_use)
+                        st.session_state.pots.append(
+                            Pot(name=final_name, initial=float(r[_bal_label]), monthly=0.0, rate=0.0)
                         )
-                    )
-                    st.session_state.contribution_types[final_name] = "Monthly"
-                    names_in_use.add(final_name)
+                        st.session_state.contribution_types[final_name] = "Monthly"
+                        names_in_use.add(final_name)
+                else:
+                    for _, r in preview_df.iterrows():
+                        base_name = r["Account"]
+                        final_name = _unique_pot_name(base_name, names_in_use)
+                        st.session_state.pots.append(
+                            Pot(name=final_name, initial=float(r[_bal_label]), monthly=0.0, rate=0.0)
+                        )
+                        st.session_state.contribution_types[final_name] = "Monthly"
+                        names_in_use.add(final_name)
 
+                n = len(preview_df)
                 st.session_state.show_import = False
                 st.session_state["import_success_msg"] = (
-                    f"Imported {len(rows)} pot(s) from tracker "
-                    f"(balances as of {import_as_of})."
+                    f"Imported {n} pot(s) from tracker (balances as of {import_as_of})."
                 )
                 st.rerun()
 
