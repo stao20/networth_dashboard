@@ -117,73 +117,33 @@ def remove_pot(index):
         del st.session_state.contribution_types[pot_name]
     st.rerun()
 
-# Display pot inputs
-for i, pot in enumerate(st.session_state.pots):
-    st.write("###", pot.name)
-    input_cols = st.columns([1, 1, 1, 1, 0.2])
-    
-    with input_cols[0]:
-        pot.initial = st.number_input(
-            "Initial Amount",
-            min_value=0.0,
-            value=float(pot.initial) if pot.initial is not None else 0.0,
-            key=f"initial_{i}_{pot.name}"
-        )
-    
-    with input_cols[1]:
-        contribution_type = st.selectbox(
-            "Contribution Type",
-            options=["Monthly", "Yearly"],
-            index=0 if st.session_state.contribution_types.get(pot.name, "Monthly") == "Monthly" else 1,
-            key=f"contribution_type_{i}_{pot.name}"
-        )
-        st.session_state.contribution_types[pot.name] = contribution_type
-    
-    with input_cols[2]:
-        contribution_label = "Monthly" if contribution_type == "Monthly" else "Yearly"
-        pot.monthly = st.number_input(
-            f"{contribution_label} Contribution",
-            min_value=0.0,
-            value=float(pot.monthly) if pot.monthly is not None else 0.0,
-            key=f"contribution_{i}_{pot.name}"
-        )
-    
-    with input_cols[3]:
-        pot.rate = st.number_input(
-            "Annual Return Rate (%)",
-            min_value=0.0,
-            max_value=100.0,
-            value=float(pot.rate) if pot.rate is not None else 0.0,
-            key=f"rate_{i}_{pot.name}"
-        )
-    
-    with input_cols[4]:
-        st.write("")  # Add some spacing
-        st.write("")  # Add some spacing
-        if st.button("🗑️", key=f"remove_{i}_{pot.name}", help=f"Remove {pot.name}"):
-            remove_pot(i)
-    
-    st.divider()
-
+# Load tracker snapshot once (used for import + date bounds)
 _tracker_df = db_handler.load_account_data(user_id)
 has_tracker_data = not _tracker_df.empty
 
+st.subheader("Simulation pots")
 col1, col2, col3 = st.columns([1, 1, 1])
 with col1:
     st.button("Add Pot", on_click=add_pot, use_container_width=True)
 with col3:
     import_clicked = st.button(
-        "Import from Tracker",
+        "📥 Import from Tracker",
         use_container_width=True,
         disabled=not has_tracker_data,
         help=(
             "Add accounts and values in Net Worth Tracker first"
             if not has_tracker_data
-            else None
+            else "Seed pots from your tracker; choose an as-of date for each account's balance"
         ),
     )
     if import_clicked and has_tracker_data:
         st.session_state.show_import = not st.session_state.show_import
+
+if has_tracker_data:
+    st.caption(
+        "Tip: use **Import from Tracker** to pre-fill pots from real balances "
+        "(optional **as-of** date for closed or inactive accounts)."
+    )
 
 if st.session_state.show_import and has_tracker_data:
     with st.container():
@@ -284,6 +244,56 @@ if st.session_state.show_import and has_tracker_data:
 
 elif st.session_state.show_import and not has_tracker_data:
     st.session_state.show_import = False
+
+st.divider()
+
+# Display pot inputs
+for i, pot in enumerate(st.session_state.pots):
+    st.write("###", pot.name)
+    input_cols = st.columns([1, 1, 1, 1, 0.2])
+    
+    with input_cols[0]:
+        pot.initial = st.number_input(
+            "Initial Amount",
+            min_value=0.0,
+            value=float(pot.initial) if pot.initial is not None else 0.0,
+            key=f"initial_{i}_{pot.name}"
+        )
+    
+    with input_cols[1]:
+        contribution_type = st.selectbox(
+            "Contribution Type",
+            options=["Monthly", "Yearly"],
+            index=0 if st.session_state.contribution_types.get(pot.name, "Monthly") == "Monthly" else 1,
+            key=f"contribution_type_{i}_{pot.name}"
+        )
+        st.session_state.contribution_types[pot.name] = contribution_type
+    
+    with input_cols[2]:
+        contribution_label = "Monthly" if contribution_type == "Monthly" else "Yearly"
+        pot.monthly = st.number_input(
+            f"{contribution_label} Contribution",
+            min_value=0.0,
+            value=float(pot.monthly) if pot.monthly is not None else 0.0,
+            key=f"contribution_{i}_{pot.name}"
+        )
+    
+    with input_cols[3]:
+        pot.rate = st.number_input(
+            "Annual Return Rate (%)",
+            min_value=0.0,
+            max_value=100.0,
+            value=float(pot.rate) if pot.rate is not None else 0.0,
+            key=f"rate_{i}_{pot.name}"
+        )
+    
+    with input_cols[4]:
+        st.write("")  # Add some spacing
+        st.write("")  # Add some spacing
+        if st.button("🗑️", key=f"remove_{i}_{pot.name}", help=f"Remove {pot.name}"):
+            remove_pot(i)
+    
+    st.divider()
 
 def simulate_net_worth(years=30, start_date=None):
     months = years * 12
