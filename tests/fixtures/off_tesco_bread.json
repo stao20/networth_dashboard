@@ -1,0 +1,17 @@
+{
+  "status": 1,
+  "code": "5012345678900",
+  "product": {
+    "product_name": "Tesco Wholemeal Bread",
+    "serving_size": "44 g",
+    "image_small_url": "https://example.com/img.jpg",
+    "nutriments": {
+      "energy-kcal_100g": 238,
+      "proteins_100g": 12,
+      "carbohydrates_100g": 41,
+      "fat_100g": 2.5,
+      "fiber_100g": 6,
+      "sugars_100g": 3
+    }
+  }
+}

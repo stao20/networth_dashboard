@@ -1,0 +1,10 @@
+{
+  "status": 1,
+  "code": "0000000000000",
+  "product": {
+    "product_name": "Mystery Item",
+    "nutriments": {
+      "proteins_100g": 5
+    }
+  }
+}
