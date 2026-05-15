@@ -30,6 +30,20 @@ DROP INDEX IF EXISTS idx_accounts_category_id;
 DROP INDEX IF EXISTS idx_account_values_account_id;
 DROP INDEX IF EXISTS idx_account_values_date;
 
+-- Weight loss tracker objects (added 2026-05-15)
+DROP FUNCTION IF EXISTS complete_and_start_next_plan(TEXT, UUID, DECIMAL, DECIMAL, DATE);
+DROP INDEX IF EXISTS idx_earned_badges_user;
+DROP INDEX IF EXISTS idx_exercise_entries_user_date;
+DROP INDEX IF EXISTS idx_food_entries_user_date;
+DROP INDEX IF EXISTS idx_weight_entries_user_date;
+DROP INDEX IF EXISTS idx_weight_plans_user;
+DROP INDEX IF EXISTS idx_weight_plans_one_active;
+DROP TABLE IF EXISTS earned_badges;
+DROP TABLE IF EXISTS exercise_entries;
+DROP TABLE IF EXISTS food_entries;
+DROP TABLE IF EXISTS weight_entries;
+DROP TABLE IF EXISTS weight_plans;
+
 -- Drop tables (in correct order due to foreign key constraints)
 DROP TABLE IF EXISTS account_values;
 DROP TABLE IF EXISTS accounts;

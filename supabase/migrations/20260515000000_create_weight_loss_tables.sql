@@ -133,10 +133,13 @@ BEGIN
         user_id, start_weight_kg, target_weight_kg, weekly_rate_kg,
         daily_kcal_target, weekly_exercise_min_target,
         start_date, target_date, sex, previous_plan_id, status
-    ) VALUES (
+    )
+    -- start_date pinned to Europe/London (matches src/utils/units.py APP_TZ;
+    -- avoids the UTC-vs-BST off-by-one on cycle-completion taps near midnight).
+    VALUES (
         p_user_id, p_current_weight_kg, p_new_target_weight_kg, old_rate,
         new_kcal, old_exercise_target,
-        CURRENT_DATE, p_new_target_date, old_sex, p_old_plan_id, 'active'
+        (NOW() AT TIME ZONE 'Europe/London')::DATE, p_new_target_date, old_sex, p_old_plan_id, 'active'
     )
     RETURNING id INTO new_id;
 
