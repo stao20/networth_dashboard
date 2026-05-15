@@ -1,6 +1,8 @@
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from utils import units
 
 
@@ -69,3 +71,20 @@ def test_target_date_for_rate():
         start_date=date(2026, 5, 15),
     )
     assert target == date(2026, 7, 10)
+
+
+def test_target_date_for_rate_rounds_up():
+    # 3.7 kg / 0.5 kg/wk = 7.4 weeks = 51.8 days -> ceil = 52 days
+    target = units.target_date_for_rate(
+        start_weight_kg=82.0, target_weight_kg=78.3, weekly_rate_kg=0.5,
+        start_date=date(2026, 1, 1),
+    )
+    # 2026-01-01 + 52 days = 2026-02-22
+    assert target == date(2026, 2, 22)
+
+
+def test_estimate_kcal_unknown_intensity_raises():
+    with pytest.raises(ValueError):
+        units.estimate_kcal_burned(
+            activity="walking", intensity="low", duration_min=30, weight_kg=70.0
+        )

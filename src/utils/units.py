@@ -5,6 +5,7 @@ single source of truth for the day-boundary timezone.
 """
 from __future__ import annotations
 
+import math
 from datetime import date, datetime, timedelta
 from typing import Literal
 from zoneinfo import ZoneInfo
@@ -44,10 +45,18 @@ def estimate_kcal_burned(
     """Estimate kcal burned via MET formula: kcal = MET * weight_kg * hours.
 
     Falls back to the ``"other"`` activity if the named activity isn't in
-    the table. Labelled "est." in the UI; not nutrition-grade.
+    the table. Raises ``ValueError`` for unknown intensities. Labelled
+    "est." in the UI; not nutrition-grade.
     """
-    key = (activity.lower(), intensity.lower())
-    met = _MET_TABLE.get(key) or _MET_TABLE[("other", intensity.lower())]
+    intensity_lc = intensity.lower()
+    if intensity_lc not in {"moderate", "vigorous"}:
+        raise ValueError(
+            f"intensity must be 'moderate' or 'vigorous', got {intensity!r}"
+        )
+    key = (activity.lower(), intensity_lc)
+    met = _MET_TABLE.get(key)
+    if met is None:
+        met = _MET_TABLE[("other", intensity_lc)]
     hours = duration_min / 60.0
     return round(met * weight_kg * hours, 1)
 
@@ -89,5 +98,5 @@ def target_date_for_rate(
     if kg_to_lose <= 0 or weekly_rate_kg <= 0:
         return start_date
     weeks = kg_to_lose / weekly_rate_kg
-    days = int(round(weeks * 7))
+    days = math.ceil(weeks * 7)
     return start_date + timedelta(days=days)
