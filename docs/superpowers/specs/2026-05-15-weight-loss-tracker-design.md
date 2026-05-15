@@ -350,7 +350,7 @@ Failures raise a typed `WeightLossValidationError` that the page catches and sur
 
 ### 7.3 Auth & multi-user
 
-- `user_id = st.user.email` (matches the existing pages' pattern).
+- `user_id = st.user.sub` (Google OAuth subject ID, matches the existing pages' `GoogleAuth.login_button()` pattern).
 - Every DB method takes `user_id` explicitly and `WHERE user_id = $1`'s every query.
 - No RLS in scope — handlers enforce scoping. (Adding RLS is a separate, additive change to all migrations and is not part of v1.)
 
