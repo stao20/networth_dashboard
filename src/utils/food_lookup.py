@@ -8,6 +8,8 @@ from typing import Optional
 
 import requests
 
+logger = logging.getLogger(__name__)
+
 _OFF_URL = "https://world.openfoodfacts.org/api/v2/product/{barcode}.json"
 _TIMEOUT_S = 5.0
 _NUTRIENTS_PER_100G = ("kcal", "protein", "carbs", "fat", "fibre", "sugar")
@@ -37,7 +39,7 @@ def fetch_product(barcode: str) -> Optional[OffProduct]:
     try:
         resp = requests.get(_OFF_URL.format(barcode=barcode), timeout=_TIMEOUT_S)
     except Exception:
-        logging.exception("OFF lookup failed for %s", barcode)
+        logger.warning("OFF lookup failed for %s", barcode, exc_info=True)
         return None
 
     if resp.status_code != 200:
@@ -83,6 +85,14 @@ def compute_portion(
         raise ValueError("Provide either grams or servings")
     if grams is not None and servings is not None:
         raise ValueError("Provide grams OR servings, not both")
+    if grams is not None and grams <= 0:
+        raise ValueError("grams must be positive")
+    if servings is not None and servings <= 0:
+        raise ValueError("servings must be positive")
+    if product.kcal_per_100g is None:
+        raise ValueError(
+            "Product has no kcal data; use manual entry instead"
+        )
 
     if servings is not None:
         if product.serving_size_g is None:
@@ -100,7 +110,7 @@ def compute_portion(
 
     return {
         "effective_grams": round(effective_grams, 2),
-        "kcal": _scaled(product.kcal_per_100g) or 0.0,
+        "kcal": _scaled(product.kcal_per_100g),
         "protein_g": _scaled(product.protein_per_100g),
         "carbs_g": _scaled(product.carbs_per_100g),
         "fat_g": _scaled(product.fat_per_100g),

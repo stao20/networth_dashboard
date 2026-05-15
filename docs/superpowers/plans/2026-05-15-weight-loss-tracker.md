@@ -918,6 +918,17 @@ def compute_portion(
         raise ValueError("Provide either grams or servings")
     if grams is not None and servings is not None:
         raise ValueError("Provide grams OR servings, not both")
+    # Contract: portions must be strictly positive, and the product must
+    # carry kcal data (otherwise the saved row would silently be 0 kcal,
+    # indistinguishable from a real 0-kcal product like water).
+    if grams is not None and grams <= 0:
+        raise ValueError("grams must be positive")
+    if servings is not None and servings <= 0:
+        raise ValueError("servings must be positive")
+    if product.kcal_per_100g is None:
+        raise ValueError(
+            "Product has no kcal data; use manual entry instead"
+        )
 
     if servings is not None:
         if product.serving_size_g is None:
@@ -935,7 +946,7 @@ def compute_portion(
 
     return {
         "effective_grams": round(effective_grams, 2),
-        "kcal": _scaled(product.kcal_per_100g) or 0.0,
+        "kcal": _scaled(product.kcal_per_100g),
         "protein_g": _scaled(product.protein_per_100g),
         "carbs_g": _scaled(product.carbs_per_100g),
         "fat_g": _scaled(product.fat_per_100g),
@@ -2880,6 +2891,13 @@ MSG
 
 **Files:**
 - Modify: `src/pages/weight_loss_tracker.py`
+
+> Note: the page-side `if product.kcal_per_100g is None: st.warning(...)`
+> guard below short-circuits the portion form for kcal-less products.
+> `compute_portion` ALSO raises `ValueError` in that case (post-review
+> hardening) — so the page guard is now belt-and-suspenders. Either layer
+> alone would prevent a phantom 0-kcal row; we keep both for clearer UX
+> on the page and a hard contract in the helper.
 
 ### Steps
 

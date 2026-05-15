@@ -91,3 +91,30 @@ def test_parse_serving_size_handles_units():
     assert food_lookup._parse_serving_size_grams("250ml") is None   # ml ≠ g; skip
     assert food_lookup._parse_serving_size_grams("") is None
     assert food_lookup._parse_serving_size_grams(None) is None
+
+
+def test_compute_portion_rejects_zero_grams(mocker):
+    mock_resp = mocker.MagicMock(status_code=200)
+    mock_resp.json.return_value = _load("off_tesco_bread.json")
+    mocker.patch("utils.food_lookup.requests.get", return_value=mock_resp)
+    product = food_lookup.fetch_product("5012345678900")
+    with pytest.raises(ValueError):
+        food_lookup.compute_portion(product, grams=0, servings=None)
+
+
+def test_compute_portion_rejects_negative_servings(mocker):
+    mock_resp = mocker.MagicMock(status_code=200)
+    mock_resp.json.return_value = _load("off_tesco_bread.json")
+    mocker.patch("utils.food_lookup.requests.get", return_value=mock_resp)
+    product = food_lookup.fetch_product("5012345678900")
+    with pytest.raises(ValueError):
+        food_lookup.compute_portion(product, grams=None, servings=-1)
+
+
+def test_compute_portion_raises_when_no_kcal(mocker):
+    mock_resp = mocker.MagicMock(status_code=200)
+    mock_resp.json.return_value = _load("off_no_kcal.json")
+    mocker.patch("utils.food_lookup.requests.get", return_value=mock_resp)
+    product = food_lookup.fetch_product("0000000000000")
+    with pytest.raises(ValueError):
+        food_lookup.compute_portion(product, grams=50.0, servings=None)
