@@ -47,6 +47,9 @@ htmlcov/
 .pytest_cache/
 .ruff_cache/
 
+# Superpowers brainstorming sessions
+.superpowers/
+
 # Jupyter Notebook
 .ipynb_checkpoints
 *.ipynb
