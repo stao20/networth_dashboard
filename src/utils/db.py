@@ -12,6 +12,10 @@ from supabase import create_client
 from utils.tracker_balances import latest_balances_from_account_df
 
 
+class WeightLossValidationError(ValueError):
+    """Raised when a write violates a weight-loss invariant."""
+
+
 class DatabaseHandler(ABC):
     @abstractmethod
     def load_account_data(self):
@@ -437,3 +441,142 @@ class SupabaseHandler(DatabaseHandler):
         except Exception as e:
             logging.error(f"Error in rename_simulation_report: {str(e)}")
             raise
+
+    # =============================================================
+    # Weight Loss Tracker
+    # =============================================================
+
+    _VLCD_KCAL_FLOOR = 800
+    _VLCD_MAX_DAYS = 84  # 12 weeks per NHS guidance
+    _KCAL_BOUNDS = (400, 5000)
+
+    def create_weight_plan(
+        self,
+        *,
+        user_id: str,
+        start_weight_kg: float,
+        target_weight_kg: float,
+        weekly_rate_kg: float,
+        daily_kcal_target: int,
+        weekly_exercise_min_target: int,
+        start_date,
+        target_date,
+        sex: str | None,
+        vlcd_acknowledged: bool,
+    ) -> str:
+        """Insert a new active plan. Returns its id."""
+        if daily_kcal_target < self._VLCD_KCAL_FLOOR:
+            if not vlcd_acknowledged:
+                raise WeightLossValidationError(
+                    "VLCD plans (<800 kcal) require acknowledgement."
+                )
+            if (target_date - start_date).days > self._VLCD_MAX_DAYS:
+                raise WeightLossValidationError(
+                    "VLCD plans cannot exceed 12 weeks (NHS guidance)."
+                )
+        if not (self._KCAL_BOUNDS[0] <= daily_kcal_target <= self._KCAL_BOUNDS[1]):
+            raise WeightLossValidationError(
+                f"daily_kcal_target out of bounds {self._KCAL_BOUNDS}"
+            )
+        if target_weight_kg >= start_weight_kg:
+            raise WeightLossValidationError("target_weight must be less than start_weight")
+
+        payload = {
+            "user_id": user_id,
+            "start_weight_kg": float(start_weight_kg),
+            "target_weight_kg": float(target_weight_kg),
+            "weekly_rate_kg": float(weekly_rate_kg),
+            "daily_kcal_target": int(daily_kcal_target),
+            "weekly_exercise_min_target": int(weekly_exercise_min_target),
+            "start_date": start_date.isoformat(),
+            "target_date": target_date.isoformat(),
+            "sex": sex,
+            "status": "active",
+            "vlcd_acknowledged": bool(vlcd_acknowledged),
+        }
+        resp = (
+            self.supabase.table("weight_plans")
+            .insert(payload)
+            .execute()
+        )
+        return resp.data[0]["id"]
+
+    def get_active_weight_plan(self, user_id: str) -> dict | None:
+        resp = (
+            self.supabase.table("weight_plans")
+            .select("*")
+            .eq("user_id", user_id)
+            .eq("status", "active")
+            .limit(1)
+            .execute()
+        )
+        rows = resp.data or []
+        return rows[0] if rows else None
+
+    def get_weight_plans(self, user_id: str) -> list[dict]:
+        resp = (
+            self.supabase.table("weight_plans")
+            .select("*")
+            .eq("user_id", user_id)
+            .order("start_date", desc=True)
+            .execute()
+        )
+        return resp.data or []
+
+    def update_weight_plan(
+        self,
+        *,
+        plan_id: str,
+        user_id: str,
+        daily_kcal_target: int | None = None,
+        weekly_exercise_min_target: int | None = None,
+        target_date=None,
+    ) -> None:
+        patch: dict = {}
+        if daily_kcal_target is not None:
+            patch["daily_kcal_target"] = int(daily_kcal_target)
+        if weekly_exercise_min_target is not None:
+            patch["weekly_exercise_min_target"] = int(weekly_exercise_min_target)
+        if target_date is not None:
+            patch["target_date"] = target_date.isoformat()
+        if not patch:
+            return
+        patch["updated_at"] = "now()"
+        (
+            self.supabase.table("weight_plans")
+            .update(patch)
+            .eq("id", plan_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+
+    def abandon_weight_plan(self, *, plan_id: str, user_id: str) -> None:
+        (
+            self.supabase.table("weight_plans")
+            .update({"status": "abandoned", "updated_at": "now()"})
+            .eq("id", plan_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+
+    def complete_and_start_next_plan(
+        self,
+        *,
+        user_id: str,
+        old_plan_id: str,
+        current_weight_kg: float,
+        new_target_weight_kg: float,
+        new_target_date,
+    ) -> str:
+        """Call the atomic RPC; returns the id of the freshly-created plan."""
+        resp = self.supabase.rpc(
+            "complete_and_start_next_plan",
+            {
+                "p_user_id": user_id,
+                "p_old_plan_id": old_plan_id,
+                "p_current_weight_kg": float(current_weight_kg),
+                "p_new_target_weight_kg": float(new_target_weight_kg),
+                "p_new_target_date": new_target_date.isoformat(),
+            },
+        ).execute()
+        return resp.data
