@@ -305,6 +305,66 @@ def _render_past_cycles(all_plans: list[dict]):
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
 
+def _summary_metrics(
+    *, plan: dict, food_df: pd.DataFrame, exercise_df: pd.DataFrame,
+    weight_df: pd.DataFrame, target_date: date,
+):
+    """Compute today/this-week numbers for the three summary cards."""
+    today = target_date
+    week_start, _ = iso_week_bounds(today)
+
+    today_food = food_df[food_df["log_date"] == today] if not food_df.empty else pd.DataFrame()
+    today_ex = exercise_df[exercise_df["log_date"] == today] if not exercise_df.empty else pd.DataFrame()
+    week_ex = (
+        exercise_df[(exercise_df["log_date"] >= week_start) & (exercise_df["log_date"] <= today)]
+        if not exercise_df.empty else pd.DataFrame()
+    )
+
+    kcal_in = float(today_food["kcal"].sum()) if not today_food.empty else 0.0
+    kcal_burn = (
+        float(today_ex["kcal_burned"].sum())
+        if not today_ex.empty and "kcal_burned" in today_ex.columns
+        else 0.0
+    )
+    today_min = int(today_ex["duration_min"].sum()) if not today_ex.empty else 0
+    week_min_moderate = (
+        int(week_ex.loc[week_ex["intensity"] == "moderate", "duration_min"].sum())
+        if not week_ex.empty else 0
+    )
+    week_min_vigorous = (
+        int(week_ex.loc[week_ex["intensity"] == "vigorous", "duration_min"].sum())
+        if not week_ex.empty else 0
+    )
+    week_equiv_min = moderate_equivalent_minutes(
+        moderate=week_min_moderate, vigorous=week_min_vigorous,
+    )
+
+    weight_today = None
+    weight_delta_7d = None
+    if not weight_df.empty:
+        ws = weight_df.sort_values("log_date")
+        today_rows = ws[ws["log_date"] == today]
+        if not today_rows.empty:
+            weight_today = float(today_rows.iloc[-1]["weight_kg"])
+        ago_7 = today - pd.Timedelta(days=7)
+        ago_rows = ws[ws["log_date"] <= ago_7.date()]
+        if weight_today is not None and not ago_rows.empty:
+            weight_delta_7d = round(
+                weight_today - float(ago_rows.iloc[-1]["weight_kg"]), 1,
+            )
+
+    return {
+        "kcal_in": kcal_in,
+        "kcal_target": int(plan["daily_kcal_target"]),
+        "kcal_burn": kcal_burn,
+        "today_min": today_min,
+        "week_equiv_min": week_equiv_min,
+        "weekly_target_min": int(plan["weekly_exercise_min_target"]),
+        "weight_today": weight_today,
+        "weight_delta_7d": weight_delta_7d,
+    }
+
+
 with tab_plan:
     if active_plan is None:
         _render_create_plan_form()
@@ -319,7 +379,85 @@ with tab_plan:
 
 
 with tab_today:
-    st.info("Today tab — implemented in Task 11.")
+    if active_plan is None:
+        st.info("Create a plan first on the 🎯 Plan tab.")
+    else:
+        col_date, _ = st.columns([2, 5])
+        with col_date:
+            log_date = st.date_input(
+                "Date", value=today_local(), max_value=today_local(),
+                key="today_date",
+            )
+
+        if int(active_plan["daily_kcal_target"]) < 800:
+            day_n = (log_date - pd.to_datetime(active_plan["start_date"]).date()).days + 1
+            st.warning(
+                f"⚠️ VLCD plan — day {day_n} of 84 (NHS max 12 weeks)."
+            )
+
+        # Load 21-day window: covers the 7-day weight-delta look-back plus
+        # margin so the upcoming history view can reuse this cache slot.
+        since = log_date - pd.Timedelta(days=21)
+        food_df, ex_df, weight_df = _load_recent(
+            user_id, since.date() if hasattr(since, "date") else since,
+        )
+
+        m = _summary_metrics(
+            plan=active_plan, food_df=food_df, exercise_df=ex_df,
+            weight_df=weight_df, target_date=log_date,
+        )
+
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            if m["weight_today"] is None:
+                st.metric("⚖️ Weigh-in", "—", "log today")
+            else:
+                delta_text = (
+                    f"{m['weight_delta_7d']:+.1f} kg / 7d"
+                    if m["weight_delta_7d"] is not None else "—"
+                )
+                st.metric("⚖️ Weigh-in", f"{m['weight_today']:.1f} kg", delta_text)
+            with st.popover("Log weight"):
+                with st.form("log_weight"):
+                    w = st.number_input(
+                        "Weight (kg)",
+                        min_value=20.0, max_value=400.0,
+                        value=m["weight_today"] or 70.0,
+                        step=0.1, format="%.1f",
+                    )
+                    note = st.text_input("Note (optional)")
+                    if st.form_submit_button("Save weight"):
+                        try:
+                            db.save_weight_entry(
+                                user_id=user_id, log_date=log_date,
+                                weight_kg=float(w), notes=note or None,
+                            )
+                            _invalidate_cache()
+                            st.toast("Weight saved.", icon="⚖️")
+                            st.rerun()
+                        except WeightLossValidationError as exc:
+                            st.error(str(exc))
+
+        with c2:
+            net = m["kcal_in"] - m["kcal_burn"]
+            st.metric(
+                "🍽️ Calories", f"{int(m['kcal_in'])} / {m['kcal_target']}",
+                f"net {int(net)} kcal",
+            )
+            st.progress(min(m["kcal_in"] / max(m["kcal_target"], 1), 1.0))
+
+        with c3:
+            st.metric(
+                "🏃 Exercise (today)",
+                f"{m['today_min']} min",
+                f"week {m['week_equiv_min']}/{m['weekly_target_min']} min",
+            )
+            st.progress(
+                min(m["week_equiv_min"] / max(m["weekly_target_min"], 1), 1.0)
+            )
+
+        st.divider()
+        st.info("Food and exercise forms come in Tasks 12–14.")
 
 with tab_history:
     st.info("History tab — implemented in Task 16.")
