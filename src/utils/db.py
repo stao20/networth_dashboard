@@ -861,3 +861,63 @@ class SupabaseHandler(DatabaseHandler):
             _df(ex_resp.data, ["log_date"]),
             _df(weight_resp.data, ["log_date"]),
         )
+
+    # ---- badges ----------------------------------------------------
+
+    def record_earned_badges(self, user_id: str, new_badges: list) -> None:
+        """Insert NewBadge rows. No-op for empty input.
+
+        Uses upsert with ignore_duplicates=True to absorb races against
+        the UNIQUE(user_id, badge_key, earned_on) constraint.
+        """
+        if not new_badges:
+            return
+        rows = [
+            {
+                "user_id": user_id,
+                "badge_key": b.badge_key,
+                "earned_on": b.earned_on.isoformat(),
+                "points": b.points,
+                "metadata": b.metadata,
+            }
+            for b in new_badges
+        ]
+        (
+            self.supabase.table("earned_badges")
+            .upsert(rows, on_conflict="user_id,badge_key,earned_on", ignore_duplicates=True)
+            .execute()
+        )
+
+    def get_earned_badges(self, user_id: str) -> list[dict]:
+        resp = (
+            self.supabase.table("earned_badges")
+            .select("*")
+            .eq("user_id", user_id)
+            .order("earned_on", desc=True)
+            .execute()
+        )
+        return resp.data or []
+
+    def already_earned_keys(self, user_id: str) -> set:
+        """Return the set understood by badges.evaluate's ``already_earned``.
+
+        For plan-scoped badges (those with metadata.plan_id), produces
+        3-tuples (key, earned_on, plan_id). Otherwise 2-tuples (key, earned_on).
+        """
+        from datetime import date as _date
+
+        out = set()
+        for row in self.get_earned_badges(user_id):
+            key = row["badge_key"]
+            earned_on = row["earned_on"]
+            if isinstance(earned_on, str):
+                earned_on = pd.to_datetime(earned_on).date()
+            elif not isinstance(earned_on, _date):
+                earned_on = pd.to_datetime(earned_on).date()
+            meta = row.get("metadata") or {}
+            plan_id = meta.get("plan_id")
+            if plan_id is not None:
+                out.add((key, earned_on, plan_id))
+            else:
+                out.add((key, earned_on))
+        return out

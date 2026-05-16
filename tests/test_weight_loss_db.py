@@ -296,3 +296,48 @@ def test_update_exercise_entry_happy_path(handler, fake_supabase, sample_user_id
     chain = fake_supabase._tables["exercise_entries"].calls
     update_args = next(c[1] for c in chain if c[0] == "update")
     assert update_args[0] == {"intensity": "vigorous", "duration_min": 45}
+
+
+def test_record_earned_badges_inserts_rows(handler, fake_supabase, sample_user_id):
+    from utils.badges import NewBadge
+    fake_supabase.set_table("earned_badges", [{"id": "b1"}])
+    new = [NewBadge("first_log", date(2026, 5, 15), 10),
+           NewBadge("kcal_streak_7", date(2026, 5, 15), 50, {"streak_length": 7})]
+    handler.record_earned_badges(sample_user_id, new)
+    chain = fake_supabase._tables["earned_badges"].calls
+    upserts = [c for c in chain if c[0] == "upsert"]
+    assert len(upserts) == 1
+    rows = upserts[0][1][0]
+    assert len(rows) == 2
+    assert rows[0]["badge_key"] == "first_log"
+    assert rows[1]["metadata"] == {"streak_length": 7}
+
+
+def test_record_earned_badges_noop_when_empty(handler, fake_supabase, sample_user_id):
+    fake_supabase.set_table("earned_badges", [])
+    handler.record_earned_badges(sample_user_id, [])
+    chain = fake_supabase._tables["earned_badges"].calls
+    assert not any(c[0] == "upsert" for c in chain)
+    assert not any(c[0] == "insert" for c in chain)
+
+
+def test_get_earned_badges(handler, fake_supabase, sample_user_id):
+    fake_supabase.set_table("earned_badges", [
+        {"badge_key": "first_log", "earned_on": "2026-05-15", "points": 10, "metadata": None},
+        {"badge_key": "lost_1kg", "earned_on": "2026-05-15", "points": 100,
+         "metadata": {"plan_id": "p1"}},
+    ])
+    rows = handler.get_earned_badges(sample_user_id)
+    assert len(rows) == 2
+    assert rows[1]["metadata"]["plan_id"] == "p1"
+
+
+def test_already_earned_set_includes_plan_ids(handler, fake_supabase, sample_user_id):
+    fake_supabase.set_table("earned_badges", [
+        {"badge_key": "first_log", "earned_on": "2026-05-15", "metadata": None},
+        {"badge_key": "lost_1kg", "earned_on": "2026-05-10",
+         "metadata": {"plan_id": "p1"}},
+    ])
+    already = handler.already_earned_keys(sample_user_id)
+    assert ("first_log", date(2026, 5, 15)) in already
+    assert ("lost_1kg", date(2026, 5, 10), "p1") in already
