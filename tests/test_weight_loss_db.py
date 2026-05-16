@@ -1,5 +1,6 @@
 from datetime import date
 
+import pandas as pd
 import pytest
 
 from utils.db import SupabaseHandler
@@ -156,3 +157,70 @@ def test_update_plan_rejects_extending_vlcd_past_12_weeks(handler, fake_supabase
             plan_id="p1", user_id=sample_user_id,
             target_date=date(2026, 11, 15),
         )
+
+
+def test_save_weight_entry_validates_bounds(handler, sample_user_id):
+    from utils.db import WeightLossValidationError
+    with pytest.raises(WeightLossValidationError):
+        handler.save_weight_entry(
+            user_id=sample_user_id, log_date=date(2026, 5, 15), weight_kg=10.0
+        )
+
+
+def test_save_weight_entry_upserts(handler, fake_supabase, sample_user_id):
+    fake_supabase.set_table("weight_entries", [{"id": "w1"}])
+    handler.save_weight_entry(
+        user_id=sample_user_id, log_date=date(2026, 5, 15), weight_kg=78.4
+    )
+    chain = fake_supabase._tables["weight_entries"].calls
+    assert any(c[0] == "upsert" for c in chain)
+
+
+def test_save_food_entry_validates_kcal(handler, sample_user_id):
+    from utils.db import WeightLossValidationError
+    with pytest.raises(WeightLossValidationError):
+        handler.save_food_entry(
+            user_id=sample_user_id, log_date=date(2026, 5, 15),
+            name="X", kcal=99999, source="manual",
+        )
+
+
+def test_save_exercise_entry_validates_intensity(handler, sample_user_id):
+    from utils.db import WeightLossValidationError
+    with pytest.raises(WeightLossValidationError):
+        handler.save_exercise_entry(
+            user_id=sample_user_id, log_date=date(2026, 5, 15),
+            activity="walking", intensity="warp_speed", duration_min=30,
+        )
+
+
+def test_load_recent_logs_returns_three_frames(handler, fake_supabase, sample_user_id):
+    fake_supabase.set_table("food_entries", [
+        {"log_date": "2026-05-14", "kcal": 1500, "protein_g": 80, "name": "Eggs"},
+    ])
+    fake_supabase.set_table("exercise_entries", [
+        {"log_date": "2026-05-14", "duration_min": 30, "intensity": "moderate", "activity": "walking"},
+    ])
+    fake_supabase.set_table("weight_entries", [
+        {"log_date": "2026-05-14", "weight_kg": 78.0},
+    ])
+    food, exercise, weight = handler.load_recent_logs(
+        sample_user_id, since_date=date(2026, 5, 1)
+    )
+    assert isinstance(food, pd.DataFrame) and not food.empty
+    assert isinstance(exercise, pd.DataFrame) and not exercise.empty
+    assert isinstance(weight, pd.DataFrame) and not weight.empty
+
+
+def test_delete_food_entry(handler, fake_supabase, sample_user_id):
+    fake_supabase.set_table("food_entries", [])
+    handler.delete_food_entry(entry_id="f1", user_id=sample_user_id)
+    chain = fake_supabase._tables["food_entries"].calls
+    assert any(c[0] == "delete" for c in chain)
+
+
+def test_delete_exercise_entry(handler, fake_supabase, sample_user_id):
+    fake_supabase.set_table("exercise_entries", [])
+    handler.delete_exercise_entry(entry_id="e1", user_id=sample_user_id)
+    chain = fake_supabase._tables["exercise_entries"].calls
+    assert any(c[0] == "delete" for c in chain)

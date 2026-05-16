@@ -624,3 +624,210 @@ class SupabaseHandler(DatabaseHandler):
             },
         ).execute()
         return resp.data
+
+    # ---- entry CRUD -------------------------------------------------
+
+    _WEIGHT_BOUNDS = (20.0, 400.0)
+    _KCAL_ENTRY_BOUNDS = (0, 20000)
+    _DURATION_MIN_BOUNDS = (1, 1440)
+    _ALLOWED_INTENSITIES = ("moderate", "vigorous")
+    _ALLOWED_SOURCES = ("manual", "barcode")
+
+    def save_weight_entry(
+        self, *, user_id: str, log_date, weight_kg: float, notes: str | None = None
+    ) -> dict:
+        if not (self._WEIGHT_BOUNDS[0] <= weight_kg <= self._WEIGHT_BOUNDS[1]):
+            raise WeightLossValidationError(
+                f"weight_kg must be in {self._WEIGHT_BOUNDS}"
+            )
+        payload = {
+            "user_id": user_id,
+            "log_date": log_date.isoformat(),
+            "weight_kg": float(weight_kg),
+            "notes": notes,
+        }
+        resp = (
+            self.supabase.table("weight_entries")
+            .upsert(payload, on_conflict="user_id,log_date")
+            .execute()
+        )
+        return (resp.data or [{}])[0]
+
+    def save_food_entry(
+        self,
+        *,
+        user_id: str,
+        log_date,
+        name: str,
+        kcal: float,
+        portion_g: float | None = None,
+        protein_g: float | None = None,
+        carbs_g: float | None = None,
+        fat_g: float | None = None,
+        fibre_g: float | None = None,
+        sugar_g: float | None = None,
+        log_time=None,
+        barcode: str | None = None,
+        source: str = "manual",
+    ) -> dict:
+        if not (self._KCAL_ENTRY_BOUNDS[0] <= kcal <= self._KCAL_ENTRY_BOUNDS[1]):
+            raise WeightLossValidationError(
+                f"kcal must be in {self._KCAL_ENTRY_BOUNDS}"
+            )
+        if source not in self._ALLOWED_SOURCES:
+            raise WeightLossValidationError(
+                f"source must be one of {self._ALLOWED_SOURCES}"
+            )
+        if not name:
+            raise WeightLossValidationError("name is required")
+
+        payload = {
+            "user_id": user_id,
+            "log_date": log_date.isoformat(),
+            "log_time": log_time.isoformat() if log_time else None,
+            "name": name,
+            "portion_g": float(portion_g) if portion_g is not None else None,
+            "kcal": float(kcal),
+            "protein_g": float(protein_g) if protein_g is not None else None,
+            "carbs_g": float(carbs_g) if carbs_g is not None else None,
+            "fat_g": float(fat_g) if fat_g is not None else None,
+            "fibre_g": float(fibre_g) if fibre_g is not None else None,
+            "sugar_g": float(sugar_g) if sugar_g is not None else None,
+            "barcode": barcode,
+            "source": source,
+        }
+        resp = self.supabase.table("food_entries").insert(payload).execute()
+        return (resp.data or [{}])[0]
+
+    def save_exercise_entry(
+        self,
+        *,
+        user_id: str,
+        log_date,
+        activity: str,
+        intensity: str,
+        duration_min: int,
+        kcal_burned: float | None = None,
+        notes: str | None = None,
+    ) -> dict:
+        if intensity not in self._ALLOWED_INTENSITIES:
+            raise WeightLossValidationError(
+                f"intensity must be one of {self._ALLOWED_INTENSITIES}"
+            )
+        if not (self._DURATION_MIN_BOUNDS[0] <= duration_min <= self._DURATION_MIN_BOUNDS[1]):
+            raise WeightLossValidationError(
+                f"duration_min must be in {self._DURATION_MIN_BOUNDS}"
+            )
+        if not activity:
+            raise WeightLossValidationError("activity is required")
+
+        payload = {
+            "user_id": user_id,
+            "log_date": log_date.isoformat(),
+            "activity": activity,
+            "intensity": intensity,
+            "duration_min": int(duration_min),
+            "kcal_burned": float(kcal_burned) if kcal_burned is not None else None,
+            "notes": notes,
+        }
+        resp = self.supabase.table("exercise_entries").insert(payload).execute()
+        return (resp.data or [{}])[0]
+
+    def delete_food_entry(self, *, entry_id: str, user_id: str) -> None:
+        (
+            self.supabase.table("food_entries")
+            .delete()
+            .eq("id", entry_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+
+    def delete_exercise_entry(self, *, entry_id: str, user_id: str) -> None:
+        (
+            self.supabase.table("exercise_entries")
+            .delete()
+            .eq("id", entry_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+
+    def update_food_entry(self, *, entry_id: str, user_id: str, **fields) -> dict:
+        if not fields:
+            return {}
+        # Whitelist columns to prevent injection-by-typo.
+        allowed = {
+            "name", "portion_g", "kcal", "protein_g", "carbs_g", "fat_g",
+            "fibre_g", "sugar_g", "log_time", "log_date",
+        }
+        patch = {k: v for k, v in fields.items() if k in allowed}
+        for k in ("log_date", "log_time"):
+            if k in patch and hasattr(patch[k], "isoformat"):
+                patch[k] = patch[k].isoformat()
+        resp = (
+            self.supabase.table("food_entries")
+            .update(patch)
+            .eq("id", entry_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+        return (resp.data or [{}])[0]
+
+    def update_exercise_entry(self, *, entry_id: str, user_id: str, **fields) -> dict:
+        if not fields:
+            return {}
+        allowed = {
+            "activity", "intensity", "duration_min", "kcal_burned", "notes", "log_date",
+        }
+        patch = {k: v for k, v in fields.items() if k in allowed}
+        if "log_date" in patch and hasattr(patch["log_date"], "isoformat"):
+            patch["log_date"] = patch["log_date"].isoformat()
+        resp = (
+            self.supabase.table("exercise_entries")
+            .update(patch)
+            .eq("id", entry_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+        return (resp.data or [{}])[0]
+
+    def load_recent_logs(
+        self, user_id: str, since_date
+    ) -> tuple["pd.DataFrame", "pd.DataFrame", "pd.DataFrame"]:
+        """Return (food_df, exercise_df, weight_df) since ``since_date``."""
+        food_resp = (
+            self.supabase.table("food_entries")
+            .select("*")
+            .eq("user_id", user_id)
+            .gte("log_date", since_date.isoformat())
+            .order("log_date", desc=False)
+            .execute()
+        )
+        ex_resp = (
+            self.supabase.table("exercise_entries")
+            .select("*")
+            .eq("user_id", user_id)
+            .gte("log_date", since_date.isoformat())
+            .order("log_date", desc=False)
+            .execute()
+        )
+        weight_resp = (
+            self.supabase.table("weight_entries")
+            .select("*")
+            .eq("user_id", user_id)
+            .gte("log_date", since_date.isoformat())
+            .order("log_date", desc=False)
+            .execute()
+        )
+
+        def _df(rows, date_cols):
+            df = pd.DataFrame(rows or [])
+            for c in date_cols:
+                if c in df.columns and not df.empty:
+                    df[c] = pd.to_datetime(df[c]).dt.date
+            return df
+
+        return (
+            _df(food_resp.data, ["log_date"]),
+            _df(ex_resp.data, ["log_date"]),
+            _df(weight_resp.data, ["log_date"]),
+        )
