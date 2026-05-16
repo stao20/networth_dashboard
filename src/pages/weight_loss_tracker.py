@@ -164,6 +164,7 @@ def _render_create_plan_form():
                     sex=sex_code,
                     vlcd_acknowledged=vlcd_ack,
                 )
+                _evaluate_and_record_badges(target_date=today_local())
                 _invalidate_cache()
                 st.toast("Plan created.", icon="🎉")
                 st.rerun()
@@ -282,6 +283,7 @@ def _render_active_cycle_card(plan: dict, weight_df: pd.DataFrame, all_plans: li
                     new_target_weight_kg=next_target,
                     new_target_date=next_target_date,
                 )
+                _evaluate_and_record_badges(target_date=today_local())
                 _invalidate_cache()
                 st.toast(f"Cycle completed; new plan {new_id[:8]}… is active.", icon="🎯")
                 st.rerun()
@@ -365,6 +367,39 @@ def _summary_metrics(
     }
 
 
+def _evaluate_and_record_badges(*, target_date: date) -> list:
+    """Pull recent logs, evaluate, persist new badges, toast each one.
+
+    Reads directly (not via the cached wrappers) so the just-saved row is
+    visible to the evaluator. ``_invalidate_cache()`` is what callers run
+    afterwards to flush the page-side cache.
+
+    Returns the list of newly-inserted NewBadge instances (mainly for
+    tests / future telemetry).
+    """
+    # 60-day window covers streaks up to 30, current-week math, and the
+    # 7-day weight delta look-back used for some milestone badges.
+    since = target_date - pd.Timedelta(days=60)
+    since_d = since.date() if hasattr(since, "date") else since
+    food_df, ex_df, weight_df = db.load_recent_logs(user_id, since_d)
+    all_plans = db.get_weight_plans(user_id)
+    plan_df = pd.DataFrame(all_plans)
+    already = db.already_earned_keys(user_id)
+
+    new_badges = evaluate_badges(
+        user_id=user_id, today=target_date,
+        food_df=food_df, exercise_df=ex_df,
+        weight_df=weight_df, plan_df=plan_df,
+        already_earned=already,
+    )
+    if new_badges:
+        db.record_earned_badges(user_id, new_badges)
+        for b in new_badges:
+            meta = BADGES[b.badge_key]
+            st.toast(f"{meta['emoji']} {meta['name']} — +{b.points} pts!")
+    return new_badges
+
+
 with tab_plan:
     if active_plan is None:
         _render_create_plan_form()
@@ -432,6 +467,7 @@ with tab_today:
                                 user_id=user_id, log_date=log_date,
                                 weight_kg=float(w), notes=note or None,
                             )
+                            _evaluate_and_record_badges(target_date=log_date)
                             _invalidate_cache()
                             st.toast("Weight saved.", icon="⚖️")
                             st.rerun()
@@ -511,6 +547,7 @@ with tab_today:
                             sugar_g=sugar or None,
                             source="manual",
                         )
+                        _evaluate_and_record_badges(target_date=log_date)
                         _invalidate_cache()
                         st.toast("Food entry saved.", icon="🍽️")
                         st.rerun()
@@ -626,6 +663,7 @@ with tab_today:
                                 barcode=product.barcode,
                                 source="barcode",
                             )
+                            _evaluate_and_record_badges(target_date=log_date)
                             _invalidate_cache()
                             st.toast(
                                 "Food entry saved from barcode.",
@@ -674,6 +712,7 @@ with tab_today:
                         kcal_burned=est,
                         notes=notes or None,
                     )
+                    _evaluate_and_record_badges(target_date=log_date)
                     _invalidate_cache()
                     st.toast("Exercise saved.", icon="🏃")
                     st.rerun()
