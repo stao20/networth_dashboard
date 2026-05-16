@@ -635,6 +635,116 @@ with tab_today:
                         except WeightLossValidationError as exc:
                             st.error(str(exc))
 
+        st.divider()
+        st.subheader("+ Add exercise")
+        with st.form("exercise_form"):
+            cols = st.columns([2, 2, 1])
+            activity = cols[0].selectbox(
+                "Activity",
+                options=[
+                    "walking", "running", "cycling",
+                    "swimming", "gym", "other",
+                ],
+            )
+            intensity = cols[1].radio(
+                "Intensity",
+                options=["moderate", "vigorous"],
+                horizontal=True,
+            )
+            duration = cols[2].number_input(
+                "Minutes",
+                min_value=1, max_value=600, value=30, step=5,
+            )
+            ref_weight = m["weight_today"] or float(active_plan["start_weight_kg"])
+            est = estimate_kcal_burned(
+                activity=activity, intensity=intensity,
+                duration_min=int(duration), weight_kg=ref_weight,
+            )
+            st.caption(f"Estimated burn: **{est} kcal** (MET-based, ±20%).")
+            notes = st.text_input("Note (optional)")
+
+            if st.form_submit_button("Save exercise", type="primary"):
+                try:
+                    db.save_exercise_entry(
+                        user_id=user_id,
+                        log_date=log_date,
+                        activity=activity,
+                        intensity=intensity,
+                        duration_min=int(duration),
+                        kcal_burned=est,
+                        notes=notes or None,
+                    )
+                    _invalidate_cache()
+                    st.toast("Exercise saved.", icon="🏃")
+                    st.rerun()
+                except WeightLossValidationError as exc:
+                    st.error(str(exc))
+
+        st.divider()
+        st.subheader("Today's log")
+        today_food = (
+            food_df[food_df["log_date"] == log_date]
+            if not food_df.empty else pd.DataFrame()
+        )
+        today_ex = (
+            ex_df[ex_df["log_date"] == log_date]
+            if not ex_df.empty else pd.DataFrame()
+        )
+
+        if today_food.empty and today_ex.empty:
+            st.caption("Nothing logged yet today.")
+        else:
+            rows = []
+            for _, r in today_food.iterrows():
+                rows.append({
+                    "id": r["id"], "kind": "food",
+                    "time": r.get("log_time") or "",
+                    "item": r["name"],
+                    "kcal": f"{int(r['kcal'])}",
+                    "macros (P/C/F)": (
+                        f"{int(r.get('protein_g') or 0)}/"
+                        f"{int(r.get('carbs_g') or 0)}/"
+                        f"{int(r.get('fat_g') or 0)}"
+                    ),
+                    "source": r.get("source", ""),
+                })
+            for _, r in today_ex.iterrows():
+                rows.append({
+                    "id": r["id"], "kind": "exercise",
+                    "time": "",
+                    "item": f"{r['activity']} · {r['intensity']}",
+                    "kcal": f"−{int(r.get('kcal_burned') or 0)}",
+                    "macros (P/C/F)": f"{int(r['duration_min'])} min",
+                    "source": "",
+                })
+            log_df = pd.DataFrame(rows)
+            log_df = log_df.sort_values("time", kind="stable").reset_index(drop=True)
+            st.dataframe(
+                log_df.drop(columns=["id", "kind"]),
+                use_container_width=True, hide_index=True,
+            )
+            with st.expander("Delete an entry"):
+                pick = st.selectbox(
+                    "Pick entry",
+                    options=log_df.index,
+                    format_func=lambda i: (
+                        f"[{log_df.loc[i, 'kind']}] {log_df.loc[i, 'item']}"
+                    ),
+                )
+                if st.button("Delete selected", type="secondary"):
+                    row = log_df.loc[pick]
+                    if row["kind"] == "food":
+                        db.delete_food_entry(
+                            entry_id=row["id"], user_id=user_id,
+                        )
+                    else:
+                        db.delete_exercise_entry(
+                            entry_id=row["id"], user_id=user_id,
+                        )
+                    _invalidate_cache()
+                    st.toast("Entry deleted.", icon="🗑️")
+                    st.rerun()
+
 with tab_history:
     st.info("History tab — implemented in Task 16.")
 
