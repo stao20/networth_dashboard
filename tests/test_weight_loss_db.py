@@ -224,3 +224,75 @@ def test_delete_exercise_entry(handler, fake_supabase, sample_user_id):
     handler.delete_exercise_entry(entry_id="e1", user_id=sample_user_id)
     chain = fake_supabase._tables["exercise_entries"].calls
     assert any(c[0] == "delete" for c in chain)
+
+
+def test_update_food_entry_rejects_kcal_over_bound(handler, sample_user_id):
+    from utils.db import WeightLossValidationError
+    with pytest.raises(WeightLossValidationError):
+        handler.update_food_entry(
+            entry_id="f1", user_id=sample_user_id, kcal=99999
+        )
+
+
+def test_update_food_entry_rejects_empty_name(handler, sample_user_id):
+    from utils.db import WeightLossValidationError
+    with pytest.raises(WeightLossValidationError):
+        handler.update_food_entry(
+            entry_id="f1", user_id=sample_user_id, name=""
+        )
+
+
+def test_update_food_entry_happy_path(handler, fake_supabase, sample_user_id):
+    fake_supabase.set_table("food_entries", [{"id": "f1", "name": "renamed"}])
+    out = handler.update_food_entry(
+        entry_id="f1", user_id=sample_user_id, name="renamed", kcal=400.0
+    )
+    assert out["name"] == "renamed"
+    chain = fake_supabase._tables["food_entries"].calls
+    update_args = next(c[1] for c in chain if c[0] == "update")
+    assert update_args[0] == {"name": "renamed", "kcal": 400.0}
+
+
+def test_update_food_entry_no_op_when_no_allowed_fields(handler, fake_supabase, sample_user_id):
+    out = handler.update_food_entry(
+        entry_id="f1", user_id=sample_user_id, hacked_column="bad"
+    )
+    assert out == {}
+    # Whitelist filtered everything out -> no supabase call should fire.
+    chain = fake_supabase._tables.get("food_entries")
+    assert chain is None or "update" not in [c[0] for c in chain.calls]
+
+
+def test_update_exercise_entry_rejects_bad_intensity(handler, sample_user_id):
+    from utils.db import WeightLossValidationError
+    with pytest.raises(WeightLossValidationError):
+        handler.update_exercise_entry(
+            entry_id="e1", user_id=sample_user_id, intensity="lukewarm"
+        )
+
+
+def test_update_exercise_entry_rejects_duration_zero(handler, sample_user_id):
+    from utils.db import WeightLossValidationError
+    with pytest.raises(WeightLossValidationError):
+        handler.update_exercise_entry(
+            entry_id="e1", user_id=sample_user_id, duration_min=0
+        )
+
+
+def test_update_exercise_entry_rejects_empty_activity(handler, sample_user_id):
+    from utils.db import WeightLossValidationError
+    with pytest.raises(WeightLossValidationError):
+        handler.update_exercise_entry(
+            entry_id="e1", user_id=sample_user_id, activity=""
+        )
+
+
+def test_update_exercise_entry_happy_path(handler, fake_supabase, sample_user_id):
+    fake_supabase.set_table("exercise_entries", [{"id": "e1"}])
+    handler.update_exercise_entry(
+        entry_id="e1", user_id=sample_user_id,
+        intensity="vigorous", duration_min=45,
+    )
+    chain = fake_supabase._tables["exercise_entries"].calls
+    update_args = next(c[1] for c in chain if c[0] == "update")
+    assert update_args[0] == {"intensity": "vigorous", "duration_min": 45}

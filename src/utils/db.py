@@ -760,9 +760,22 @@ class SupabaseHandler(DatabaseHandler):
             "fibre_g", "sugar_g", "log_time", "log_date",
         }
         patch = {k: v for k, v in fields.items() if k in allowed}
+        if not patch:
+            return {}
         for k in ("log_date", "log_time"):
             if k in patch and hasattr(patch[k], "isoformat"):
                 patch[k] = patch[k].isoformat()
+
+        # Re-validate post-edit invariants (spec §7.2).
+        if "kcal" in patch:
+            kcal = patch["kcal"]
+            if not (self._KCAL_ENTRY_BOUNDS[0] <= kcal <= self._KCAL_ENTRY_BOUNDS[1]):
+                raise WeightLossValidationError(
+                    f"kcal must be in {self._KCAL_ENTRY_BOUNDS}"
+                )
+        if "name" in patch and not patch["name"]:
+            raise WeightLossValidationError("name is required")
+
         resp = (
             self.supabase.table("food_entries")
             .update(patch)
@@ -779,8 +792,25 @@ class SupabaseHandler(DatabaseHandler):
             "activity", "intensity", "duration_min", "kcal_burned", "notes", "log_date",
         }
         patch = {k: v for k, v in fields.items() if k in allowed}
+        if not patch:
+            return {}
         if "log_date" in patch and hasattr(patch["log_date"], "isoformat"):
             patch["log_date"] = patch["log_date"].isoformat()
+
+        # Re-validate post-edit invariants (spec §7.2).
+        if "intensity" in patch and patch["intensity"] not in self._ALLOWED_INTENSITIES:
+            raise WeightLossValidationError(
+                f"intensity must be one of {self._ALLOWED_INTENSITIES}"
+            )
+        if "duration_min" in patch:
+            d = patch["duration_min"]
+            if not (self._DURATION_MIN_BOUNDS[0] <= d <= self._DURATION_MIN_BOUNDS[1]):
+                raise WeightLossValidationError(
+                    f"duration_min must be in {self._DURATION_MIN_BOUNDS}"
+                )
+        if "activity" in patch and not patch["activity"]:
+            raise WeightLossValidationError("activity is required")
+
         resp = (
             self.supabase.table("exercise_entries")
             .update(patch)
