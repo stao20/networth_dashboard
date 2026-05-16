@@ -541,6 +541,49 @@ class SupabaseHandler(DatabaseHandler):
             patch["target_date"] = target_date.isoformat()
         if not patch:
             return
+
+        # Re-validate post-edit invariants. Uses the stored plan to fill in any
+        # field the caller didn't change.
+        if daily_kcal_target is not None or target_date is not None:
+            existing_resp = (
+                self.supabase.table("weight_plans")
+                .select("start_date, target_date, daily_kcal_target, vlcd_acknowledged")
+                .eq("id", plan_id)
+                .eq("user_id", user_id)
+                .limit(1)
+                .execute()
+            )
+            rows = existing_resp.data or []
+            if not rows:
+                raise WeightLossValidationError("plan not found")
+            existing = rows[0]
+            effective_kcal = (
+                int(daily_kcal_target)
+                if daily_kcal_target is not None
+                else int(existing["daily_kcal_target"])
+            )
+            effective_target_date = (
+                target_date
+                if target_date is not None
+                else date.fromisoformat(existing["target_date"])
+            )
+            existing_start_date = date.fromisoformat(existing["start_date"])
+            vlcd_acknowledged = bool(existing.get("vlcd_acknowledged"))
+
+            if effective_kcal < self._VLCD_KCAL_FLOOR:
+                if not vlcd_acknowledged:
+                    raise WeightLossValidationError(
+                        "VLCD plans (<800 kcal) require acknowledgement."
+                    )
+                if (effective_target_date - existing_start_date).days > self._VLCD_MAX_DAYS:
+                    raise WeightLossValidationError(
+                        "VLCD plans cannot exceed 12 weeks (NHS guidance)."
+                    )
+            if not (self._KCAL_BOUNDS[0] <= effective_kcal <= self._KCAL_BOUNDS[1]):
+                raise WeightLossValidationError(
+                    f"daily_kcal_target out of bounds {self._KCAL_BOUNDS}"
+                )
+
         patch["updated_at"] = "now()"
         (
             self.supabase.table("weight_plans")
@@ -556,6 +599,7 @@ class SupabaseHandler(DatabaseHandler):
             .update({"status": "abandoned", "updated_at": "now()"})
             .eq("id", plan_id)
             .eq("user_id", user_id)
+            .eq("status", "active")
             .execute()
         )
 

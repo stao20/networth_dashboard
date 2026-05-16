@@ -109,6 +109,50 @@ def test_abandon_plan(handler, fake_supabase, sample_user_id):
     fake_supabase.set_table("weight_plans", [{"id": "p1"}])
     handler.abandon_weight_plan(plan_id="p1", user_id=sample_user_id)
     chain = fake_supabase._tables["weight_plans"].calls
-    # Find the update payload
     op_names = [c[0] for c in chain]
     assert "update" in op_names
+    update_args = next(c[1] for c in chain if c[0] == "update")
+    assert update_args[0] == {"status": "abandoned", "updated_at": "now()"}
+    eq_calls = [c for c in chain if c[0] == "eq"]
+    eq_pairs = {c[1][0]: c[1][1] for c in eq_calls}
+    assert eq_pairs.get("status") == "active"
+    assert eq_pairs.get("id") == "p1"
+    assert eq_pairs.get("user_id") == sample_user_id
+
+
+def test_update_plan_no_op_when_no_fields(handler, fake_supabase, sample_user_id):
+    handler.update_weight_plan(plan_id="p1", user_id=sample_user_id)
+    # Empty patch should result in NO update being issued. The supabase
+    # client may not be touched at all, so the table entry is optional.
+    table = fake_supabase._tables.get("weight_plans")
+    op_names = [c[0] for c in table.calls] if table is not None else []
+    assert "update" not in op_names
+
+
+def test_update_plan_rejects_dropping_below_vlcd_without_ack(handler, fake_supabase, sample_user_id):
+    from utils.db import WeightLossValidationError
+    fake_supabase.set_table("weight_plans", [{
+        "start_date": "2026-05-15",
+        "target_date": "2026-07-10",
+        "daily_kcal_target": 1900,
+        "vlcd_acknowledged": False,
+    }])
+    with pytest.raises(WeightLossValidationError):
+        handler.update_weight_plan(
+            plan_id="p1", user_id=sample_user_id, daily_kcal_target=700,
+        )
+
+
+def test_update_plan_rejects_extending_vlcd_past_12_weeks(handler, fake_supabase, sample_user_id):
+    from utils.db import WeightLossValidationError
+    fake_supabase.set_table("weight_plans", [{
+        "start_date": "2026-05-15",
+        "target_date": "2026-07-10",
+        "daily_kcal_target": 700,
+        "vlcd_acknowledged": True,
+    }])
+    with pytest.raises(WeightLossValidationError):
+        handler.update_weight_plan(
+            plan_id="p1", user_id=sample_user_id,
+            target_date=date(2026, 11, 15),
+        )
