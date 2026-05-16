@@ -457,7 +457,68 @@ with tab_today:
             )
 
         st.divider()
-        st.info("Food and exercise forms come in Tasks 12–14.")
+        st.subheader("+ Add food")
+        food_tab_manual, food_tab_barcode = st.tabs(["Manual", "Barcode"])
+
+        with food_tab_manual:
+            with st.form("manual_food"):
+                col_a, col_b = st.columns([2, 1])
+                name = col_a.text_input("Name", placeholder="e.g. Tuna salad")
+                portion = col_b.number_input(
+                    "Portion (g, optional)",
+                    min_value=0.0, max_value=5000.0,
+                    value=0.0, step=10.0,
+                )
+                col_c1, col_c2, col_c3, col_c4 = st.columns(4)
+                kcal = col_c1.number_input(
+                    "kcal", min_value=0.0, max_value=20000.0,
+                    value=0.0, step=10.0,
+                )
+                protein = col_c2.number_input(
+                    "protein (g)", min_value=0.0, max_value=500.0,
+                    value=0.0, step=1.0,
+                )
+                carbs = col_c3.number_input(
+                    "carbs (g)", min_value=0.0, max_value=2000.0,
+                    value=0.0, step=1.0,
+                )
+                fat = col_c4.number_input(
+                    "fat (g)", min_value=0.0, max_value=500.0,
+                    value=0.0, step=1.0,
+                )
+                col_d1, col_d2 = st.columns(2)
+                fibre = col_d1.number_input(
+                    "fibre (g)", min_value=0.0, max_value=200.0,
+                    value=0.0, step=0.5,
+                )
+                sugar = col_d2.number_input(
+                    "sugar (g)", min_value=0.0, max_value=500.0,
+                    value=0.0, step=1.0,
+                )
+
+                if st.form_submit_button("Save food", type="primary"):
+                    try:
+                        db.save_food_entry(
+                            user_id=user_id,
+                            log_date=log_date,
+                            name=name,
+                            kcal=kcal,
+                            portion_g=portion or None,
+                            protein_g=protein or None,
+                            carbs_g=carbs or None,
+                            fat_g=fat or None,
+                            fibre_g=fibre or None,
+                            sugar_g=sugar or None,
+                            source="manual",
+                        )
+                        _invalidate_cache()
+                        st.toast("Food entry saved.", icon="🍽️")
+                        st.rerun()
+                    except WeightLossValidationError as exc:
+                        st.error(str(exc))
+
+        with food_tab_barcode:
+            st.info("Barcode lookup — implemented in Task 13.")
 
 with tab_history:
     st.info("History tab — implemented in Task 16.")
