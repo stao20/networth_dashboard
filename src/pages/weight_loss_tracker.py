@@ -518,7 +518,122 @@ with tab_today:
                         st.error(str(exc))
 
         with food_tab_barcode:
-            st.info("Barcode lookup — implemented in Task 13.")
+            if "off_cache" not in st.session_state:
+                st.session_state.off_cache = {}
+
+            col_bc, col_btn = st.columns([3, 1])
+            barcode_input = col_bc.text_input(
+                "Scan or type barcode",
+                key="barcode_input",
+                placeholder="e.g. 5012345678900",
+            )
+            if col_btn.button("Look up"):
+                if not barcode_input.strip():
+                    st.error("Enter a barcode first.")
+                else:
+                    product = st.session_state.off_cache.get(barcode_input)
+                    if product is None:
+                        with st.spinner("Looking up…"):
+                            product = fetch_product(barcode_input.strip())
+                        if product is None:
+                            st.error(
+                                "Product not found on Open Food Facts. "
+                                "Switch to the Manual tab to enter it yourself."
+                            )
+                        else:
+                            st.session_state.off_cache[barcode_input] = product
+
+            product = st.session_state.off_cache.get(barcode_input)
+            if product is not None:
+                cols = st.columns([1, 3])
+                if product.image_url:
+                    cols[0].image(product.image_url, width=80)
+                cols[1].markdown(f"**{product.name}**")
+                per_100g = (
+                    f"{product.kcal_per_100g or '?'} kcal · "
+                    f"P {product.protein_per_100g or '?'} · "
+                    f"C {product.carbs_per_100g or '?'} · "
+                    f"F {product.fat_per_100g or '?'} · "
+                    f"Fibre {product.fibre_per_100g or '?'} · "
+                    f"Sug {product.sugar_per_100g or '?'}"
+                )
+                cols[1].caption(f"Per 100 g: {per_100g}")
+
+                if product.kcal_per_100g is None:
+                    st.warning(
+                        "No kcal data on the product. "
+                        "Use Manual entry for this one."
+                    )
+                else:
+                    use_serving = (
+                        product.serving_size_g is not None
+                        and st.radio(
+                            "Portion mode",
+                            options=[
+                                "Grams",
+                                f"Servings ({product.serving_size_g:.0f} g each)",
+                            ],
+                            horizontal=True,
+                            key="portion_mode",
+                        ).startswith("Servings")
+                    )
+                    if use_serving:
+                        n = st.number_input(
+                            "Servings",
+                            min_value=0.1, max_value=20.0,
+                            value=1.0, step=0.1,
+                            key="portion_servings",
+                        )
+                        preview = compute_portion(
+                            product, grams=None, servings=float(n),
+                        )
+                    else:
+                        g = st.number_input(
+                            "Grams",
+                            min_value=1.0, max_value=5000.0,
+                            value=product.serving_size_g or 100.0,
+                            step=10.0,
+                            key="portion_grams",
+                        )
+                        preview = compute_portion(
+                            product, grams=float(g), servings=None,
+                        )
+
+                    preview_caption = (
+                        f"**Preview ({preview['effective_grams']} g):** "
+                        f"{preview['kcal']} kcal · P {preview['protein_g']} · "
+                        f"C {preview['carbs_g']} · F {preview['fat_g']} · "
+                        f"Fibre {preview['fibre_g']} · Sug {preview['sugar_g']}"
+                    )
+                    st.markdown(preview_caption)
+
+                    if st.button(
+                        "Save barcode entry",
+                        type="primary", key="save_barcode",
+                    ):
+                        try:
+                            db.save_food_entry(
+                                user_id=user_id,
+                                log_date=log_date,
+                                name=product.name,
+                                kcal=preview["kcal"],
+                                portion_g=preview["effective_grams"],
+                                protein_g=preview["protein_g"],
+                                carbs_g=preview["carbs_g"],
+                                fat_g=preview["fat_g"],
+                                fibre_g=preview["fibre_g"],
+                                sugar_g=preview["sugar_g"],
+                                barcode=product.barcode,
+                                source="barcode",
+                            )
+                            _invalidate_cache()
+                            st.toast(
+                                "Food entry saved from barcode.",
+                                icon="🛒",
+                            )
+                            st.rerun()
+                        except WeightLossValidationError as exc:
+                            st.error(str(exc))
 
 with tab_history:
     st.info("History tab — implemented in Task 16.")
