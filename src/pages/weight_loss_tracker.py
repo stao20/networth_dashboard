@@ -941,4 +941,85 @@ with tab_history:
             )
 
 with tab_rewards:
-    st.info("Rewards tab — implemented in Task 17.")
+    earned = db.get_earned_badges(user_id)
+    total_points = sum(int(r.get("points") or 0) for r in earned)
+
+    # Streak — derived live from food_df rather than stored, so the value
+    # reflects today's just-saved entries without waiting for badge eval.
+    food_df_all, _, _ = db.load_recent_logs(
+        user_id, today_local() - pd.Timedelta(days=60).to_pytimedelta(),
+    )
+    streak_len = 0
+    if active_plan is not None and not food_df_all.empty:
+        daily = food_df_all.groupby("log_date")["kcal"].sum()
+        cursor = today_local()
+        if cursor not in daily.index:
+            cursor = cursor - pd.Timedelta(days=1).to_pytimedelta()
+        target = int(active_plan["daily_kcal_target"])
+        while cursor in daily.index and daily.loc[cursor] <= target:
+            streak_len += 1
+            cursor = cursor - pd.Timedelta(days=1).to_pytimedelta()
+
+    hcol1, hcol2 = st.columns(2)
+    hcol1.metric("Total points", total_points)
+    hcol2.metric(
+        "Current streak",
+        f"{streak_len} days 🔥" if streak_len else "—",
+    )
+
+    earned_keys = {r["badge_key"] for r in earned}
+    # Plan-scoped milestones (loss-* badges) may legitimately appear
+    # "locked" if they were earned only on a previous plan; mirror the
+    # heuristic used by db.already_earned_keys.
+    earned_keys_with_plan = {
+        (r["badge_key"], (r.get("metadata") or {}).get("plan_id"))
+        for r in earned
+    }
+    active_plan_id = active_plan["id"] if active_plan else None
+
+    def _is_earned(key: str) -> bool:
+        if key in ("lost_1kg", "lost_3kg", "lost_5kg", "lost_5pct_body"):
+            return (key, active_plan_id) in earned_keys_with_plan
+        return key in earned_keys
+
+    earned_list = [r for r in earned if _is_earned(r["badge_key"])]
+    locked_list = [(k, info) for k, info in BADGES.items() if not _is_earned(k)]
+
+    st.subheader(f"Earned ({len(earned_list)})")
+    if not earned_list:
+        st.caption("No badges yet — log your first meal or weigh-in to start.")
+    else:
+        for chunk_start in range(0, len(earned_list), 6):
+            cols = st.columns(6)
+            for col, row in zip(cols, earned_list[chunk_start:chunk_start + 6]):
+                meta = BADGES.get(row["badge_key"], {})
+                col.markdown(
+                    "<div style='text-align:center'>"
+                    f"<div style='font-size:36px'>{meta.get('emoji', '🏅')}</div>"
+                    f"<div style='font-weight:600'>"
+                    f"{meta.get('name', row['badge_key'])}</div>"
+                    f"<div style='color:#666'>"
+                    f"{row['earned_on']} · +{row['points']} pts</div>"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+
+    st.subheader(f"Locked ({len(locked_list)})")
+    if not locked_list:
+        st.caption("All badges earned. 🏆")
+    else:
+        for chunk_start in range(0, len(locked_list), 6):
+            cols = st.columns(6)
+            for col, (key, info) in zip(
+                cols, locked_list[chunk_start:chunk_start + 6]
+            ):
+                col.markdown(
+                    "<div style='text-align:center; opacity:0.55'>"
+                    "<div style='font-size:36px'>🔒</div>"
+                    f"<div style='font-weight:600'>{info['name']}</div>"
+                    f"<div style='color:#666'>+{info['points']} pts</div>"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+                if info.get("rule"):
+                    col.caption(info["rule"])
