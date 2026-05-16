@@ -7,6 +7,7 @@ from __future__ import annotations
 from datetime import date
 
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 from config import Config
@@ -365,6 +366,77 @@ def _summary_metrics(
         "weight_today": weight_today,
         "weight_delta_7d": weight_delta_7d,
     }
+
+
+def _weekly_stats(*, food_df, ex_df, weight_df, plan) -> list[dict]:
+    if food_df.empty and ex_df.empty and weight_df.empty:
+        return []
+    all_dates = pd.concat([
+        food_df["log_date"] if "log_date" in food_df else pd.Series(dtype="object"),
+        ex_df["log_date"] if "log_date" in ex_df else pd.Series(dtype="object"),
+        weight_df["log_date"] if "log_date" in weight_df else pd.Series(dtype="object"),
+    ]).dropna().unique()
+    if len(all_dates) == 0:
+        return []
+
+    weeks = sorted(
+        {iso_week_bounds(pd.to_datetime(d).date())[0] for d in all_dates},
+        reverse=True,
+    )
+    daily_kcal_target = int(plan["daily_kcal_target"]) if plan else None
+    weekly_min_target = int(plan["weekly_exercise_min_target"]) if plan else None
+    rows = []
+    for mon in weeks:
+        sun = mon + pd.Timedelta(days=6)
+        sun_d = sun.date() if hasattr(sun, "date") else sun
+        week_food = (
+            food_df[(food_df["log_date"] >= mon) & (food_df["log_date"] <= sun_d)]
+            if not food_df.empty else pd.DataFrame()
+        )
+        week_ex = (
+            ex_df[(ex_df["log_date"] >= mon) & (ex_df["log_date"] <= sun_d)]
+            if not ex_df.empty else pd.DataFrame()
+        )
+        week_w = (
+            weight_df[
+                (weight_df["log_date"] >= mon) & (weight_df["log_date"] <= sun_d)
+            ]
+            if not weight_df.empty else pd.DataFrame()
+        )
+
+        avg_kcal = (
+            int(week_food.groupby("log_date")["kcal"].sum().mean())
+            if not week_food.empty else None
+        )
+        mod = (
+            int(week_ex.loc[week_ex["intensity"] == "moderate", "duration_min"].sum())
+            if not week_ex.empty else 0
+        )
+        vig = (
+            int(week_ex.loc[week_ex["intensity"] == "vigorous", "duration_min"].sum())
+            if not week_ex.empty else 0
+        )
+        equiv_min = moderate_equivalent_minutes(moderate=mod, vigorous=vig)
+        delta_w = None
+        if not week_w.empty:
+            ws = week_w.sort_values("log_date")
+            delta_w = round(
+                float(ws.iloc[-1]["weight_kg"]) - float(ws.iloc[0]["weight_kg"]),
+                2,
+            )
+        goals = []
+        if daily_kcal_target is not None and avg_kcal is not None:
+            goals.append("✓" if avg_kcal <= daily_kcal_target else "✗")
+        if weekly_min_target is not None:
+            goals.append("✓" if equiv_min >= weekly_min_target else "✗")
+        rows.append({
+            "Week": f"{mon} → {sun_d}",
+            "Avg kcal": avg_kcal,
+            "Exercise (mod-eq min)": equiv_min,
+            "Δ weight (kg)": delta_w,
+            "Goals": " ".join(goals) or "—",
+        })
+    return rows
 
 
 def _evaluate_and_record_badges(*, target_date: date) -> list:
@@ -785,7 +857,88 @@ with tab_today:
                     st.rerun()
 
 with tab_history:
-    st.info("History tab — implemented in Task 16.")
+    if active_plan is None and not plans:
+        st.info("Create a plan first on the 🎯 Plan tab.")
+    else:
+        range_label = st.radio(
+            "Range",
+            options=["30d", "90d", "Plan-to-date", "All", "Custom"],
+            horizontal=True, key="history_range",
+        )
+        today = today_local()
+        if range_label == "30d":
+            since = today - pd.Timedelta(days=30).to_pytimedelta()
+        elif range_label == "90d":
+            since = today - pd.Timedelta(days=90).to_pytimedelta()
+        elif range_label == "Plan-to-date" and active_plan is not None:
+            since = pd.to_datetime(active_plan["start_date"]).date()
+        elif range_label == "All":
+            since = date(2000, 1, 1)
+        else:
+            c1, c2 = st.columns(2)
+            since = c1.date_input(
+                "From",
+                value=today - pd.Timedelta(days=30).to_pytimedelta(),
+            )
+            until_input = c2.date_input("To", value=today)
+            today = until_input  # narrow the upper bound
+
+        since_date = since if isinstance(since, date) else since.date()
+        food_df, ex_df, weight_df = db.load_recent_logs(user_id, since_date)
+
+        # --- Weight chart ---------------------------------------------
+        fig = go.Figure()
+        if not weight_df.empty:
+            ws = weight_df.sort_values("log_date")
+            fig.add_trace(go.Scatter(
+                x=ws["log_date"], y=ws["weight_kg"],
+                mode="lines+markers", name="Actual",
+            ))
+        if active_plan is not None:
+            start_d = pd.to_datetime(active_plan["start_date"]).date()
+            target_d = pd.to_datetime(active_plan["target_date"]).date()
+            fig.add_trace(go.Scatter(
+                x=[start_d, target_d],
+                y=[
+                    float(active_plan["start_weight_kg"]),
+                    float(active_plan["target_weight_kg"]),
+                ],
+                mode="lines", name="Plan target",
+                line=dict(dash="dash"),
+            ))
+        fig.update_layout(
+            title="Weight trend", xaxis_title="Date", yaxis_title="kg",
+            height=380,
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        # --- Weekly stats --------------------------------------------
+        if not (food_df.empty and ex_df.empty and weight_df.empty):
+            st.subheader("Weekly stats")
+            week_rows = _weekly_stats(
+                food_df=food_df, ex_df=ex_df, weight_df=weight_df,
+                plan=active_plan,
+            )
+            st.dataframe(
+                pd.DataFrame(week_rows),
+                use_container_width=True, hide_index=True,
+            )
+
+        # --- Detail table + CSV --------------------------------------
+        st.subheader("Detail")
+        which = st.radio("Show", options=["Food", "Exercise"], horizontal=True)
+        detail_df = food_df if which == "Food" else ex_df
+        if detail_df.empty:
+            st.caption("No entries in range.")
+        else:
+            st.dataframe(detail_df, use_container_width=True, hide_index=True)
+            csv = detail_df.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                f"Download {which.lower()} CSV",
+                data=csv,
+                file_name=f"{which.lower()}_{since_date}_{today}.csv",
+                mime="text/csv",
+            )
 
 with tab_rewards:
     st.info("Rewards tab — implemented in Task 17.")
