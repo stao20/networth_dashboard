@@ -4,7 +4,7 @@ Spec: docs/superpowers/specs/2026-05-15-weight-loss-tracker-design.md
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -349,8 +349,8 @@ def _summary_metrics(
         today_rows = ws[ws["log_date"] == today]
         if not today_rows.empty:
             weight_today = float(today_rows.iloc[-1]["weight_kg"])
-        ago_7 = today - pd.Timedelta(days=7)
-        ago_rows = ws[ws["log_date"] <= ago_7.date()]
+        ago_7 = today - timedelta(days=7)
+        ago_rows = ws[ws["log_date"] <= ago_7]
         if weight_today is not None and not ago_rows.empty:
             weight_delta_7d = round(
                 weight_today - float(ago_rows.iloc[-1]["weight_kg"]), 1,
