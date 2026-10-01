@@ -52,3 +52,33 @@ def latest_balances_from_account_df(
             continue
         rows.append({"name": cat_name, "value": total})
     return rows
+
+
+def value_trends(
+    df: pd.DataFrame,
+    groups: list[tuple[str, list[str]]],
+) -> list[tuple[str, pd.DataFrame]]:
+    """Sum account values by date for each named group.
+
+    Each group is ``(series_name, account_names)``. A row is included when its
+    ``account_name`` is in that list. Category trends pass every account in the
+    category; account trends pass a single account name. Groups with no matching
+    rows are omitted. Dates that have no row are left out (no forward fill).
+
+    Returned frames have columns ``date`` (datetime64) and ``value``, ordered by
+    date. Group order is preserved.
+    """
+    if df.empty or not groups:
+        return []
+
+    series: list[tuple[str, pd.DataFrame]] = []
+    for name, account_names in groups:
+        if not account_names:
+            continue
+        subset = df[df["account_name"].isin(account_names)]
+        if subset.empty:
+            continue
+        grouped = subset.groupby("date")["value"].sum().reset_index()
+        grouped["date"] = pd.to_datetime(grouped["date"])
+        series.append((name, grouped))
+    return series

@@ -7,6 +7,7 @@ from typing import Dict, List
 from config import Config
 from utils.auth import GoogleAuth
 from utils.currency import get_currency_list, convert_currency, format_currency, get_currency_display_name
+from utils.tracker_balances import value_trends
 
 db_handler = Config.DB_HANDLER
 auth = GoogleAuth()
@@ -563,36 +564,71 @@ with tabs[2]:
     else:
         st.info("No account data to display. Add some records!")
 
+def render_value_trend_chart(
+    df: pd.DataFrame,
+    title: str,
+    groups: list[tuple[str, list[str]]],
+) -> None:
+    """Line+markers value chart in GBP. Same style for category and account series."""
+    fig = px.line(title=title)
+    for series_name, series_df in value_trends(df, groups):
+        fig.add_scatter(
+            x=series_df["date"],
+            y=series_df["value"],
+            mode="lines+markers",
+            name=series_name,
+        )
+    fig.update_layout(
+        xaxis_title="Date",
+        yaxis_title="Value (GBP £)",
+        hovermode="x unified",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
 # Analytics Tab
 with tabs[3]:
     if not account_data.empty:
-        # Category Trends
-        st.subheader("Category Trends")
-        fig_category = px.line(title="Category Trends Over Time")
+        category_groups = []
         for category in st.session_state.categories:
             category_name = category["name"]
-            category_accounts = [acc["name"] for acc in st.session_state.accounts if acc["category_name"] == category_name]
-            
+            category_accounts = [
+                acc["name"]
+                for acc in st.session_state.accounts
+                if acc["category_name"] == category_name
+            ]
             if category_accounts:
-                category_df = account_data[account_data["account_name"].isin(category_accounts)]
-                
-                if not category_df.empty:
-                    category_df = category_df.groupby("date")["value"].sum().reset_index()
-                    category_df["date"] = pd.to_datetime(category_df["date"])
-                    
-                    fig_category.add_scatter(
-                        x=category_df["date"],
-                        y=category_df["value"],
-                        mode="lines+markers",
-                        name=category_name,
-                    )
-        
-        fig_category.update_layout(
-            xaxis_title="Date",
-            yaxis_title="Value (GBP £)",
-            hovermode="x unified"
+                category_groups.append((category_name, category_accounts))
+
+        account_groups = []
+        seen_account_names = set()
+        for acc in st.session_state.accounts:
+            account_name = acc["name"]
+            if account_name in seen_account_names:
+                continue
+            seen_account_names.add(account_name)
+            account_groups.append((account_name, [account_name]))
+
+        # Category Trends
+        st.subheader("Category Trends")
+        render_value_trend_chart(
+            account_data,
+            "Category Trends Over Time",
+            category_groups,
         )
-        st.plotly_chart(fig_category, use_container_width=True)
+
+        # Account Trends — same chart, one series per account
+        st.subheader("Account Trends")
+        if value_trends(account_data, account_groups):
+            render_value_trend_chart(
+                account_data,
+                "Account Trends Over Time",
+                account_groups,
+            )
+        else:
+            st.info(
+                "No account values to chart yet. Add records to see how each account changes over time."
+            )
         
         # Historical Distribution Analysis
         st.subheader("Historical Distribution Analysis")
