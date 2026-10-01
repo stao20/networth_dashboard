@@ -7,6 +7,7 @@ from typing import Dict, List
 from config import Config
 from utils.auth import GoogleAuth
 from utils.currency import get_currency_list, convert_currency, format_currency, get_currency_display_name
+from utils.tracker_balances import custom_group_members, custom_group_name_error, normalize_custom_groups
 
 db_handler = Config.DB_HANDLER
 auth = GoogleAuth()
@@ -18,6 +19,8 @@ if "accounts" not in st.session_state:
     st.session_state.accounts = []
 if "active_tab" not in st.session_state:
     st.session_state.active_tab = "Overview"
+if "analytics_custom_groups" not in st.session_state:
+    st.session_state.analytics_custom_groups = []
 
 def load_user_data(user_id: str):
     """Load user's categories and accounts"""
@@ -593,6 +596,99 @@ with tabs[3]:
             hovermode="x unified"
         )
         st.plotly_chart(fig_category, use_container_width=True)
+
+        # Account Trends — each account is its own line, unless the user
+        # combines chosen accounts into a session-only custom group.
+        st.subheader("Account Trends")
+        st.caption(
+            "Each account is its own line. Add a custom group to combine chosen accounts into one line for this session. Groups are not saved."
+        )
+
+        accounts = st.session_state.accounts
+        account_names = list(dict.fromkeys(acc["name"] for acc in accounts))
+        name_to_id = {acc["name"]: acc["id"] for acc in accounts}
+        custom_groups = normalize_custom_groups(st.session_state.analytics_custom_groups, accounts)
+        st.session_state.analytics_custom_groups = custom_groups
+
+        with st.expander("Add a custom group"):
+            with st.form("add_analytics_custom_group"):
+                group_name = st.text_input("Group name")
+                group_accounts = st.multiselect(
+                    "Accounts",
+                    options=account_names,
+                    disabled=not account_names,
+                )
+                add_group = st.form_submit_button("Add group")
+            if add_group:
+                cleaned_name = group_name.strip()
+                selected_ids = []
+                for selected_name in group_accounts:
+                    account_id = name_to_id.get(selected_name)
+                    if account_id is not None and account_id not in selected_ids:
+                        selected_ids.append(account_id)
+                name_error = custom_group_name_error(
+                    cleaned_name,
+                    [group["name"] for group in custom_groups],
+                    account_names,
+                )
+                if name_error:
+                    st.warning(name_error)
+                elif not selected_ids:
+                    st.warning("Select at least one account.")
+                else:
+                    custom_groups.append({"name": cleaned_name, "account_ids": selected_ids})
+                    st.success(f"Added group '{cleaned_name}'.")
+
+        group_series = custom_group_members(custom_groups, accounts)
+        grouped_names = {name for _, members in group_series for name in members}
+
+        remove_index = None
+        for index, (group_name, members) in enumerate(group_series):
+            label = ", ".join(members) if members else "no current accounts"
+            group_col, remove_col = st.columns([5, 1])
+            group_col.text(f"{group_name} — {label}")
+            if remove_col.button("Remove", key=f"remove_analytics_group_{index}_{group_name}"):
+                remove_index = index
+        if remove_index is not None:
+            custom_groups.pop(remove_index)
+            st.rerun()
+
+        fig_account = px.line(title="Account Trends Over Time")
+        for group_name, members in group_series:
+            if not members:
+                continue
+            group_df = account_data[account_data["account_name"].isin(members)]
+            if group_df.empty:
+                continue
+            group_df = group_df.groupby("date")["value"].sum().reset_index()
+            group_df["date"] = pd.to_datetime(group_df["date"])
+            fig_account.add_scatter(
+                x=group_df["date"],
+                y=group_df["value"],
+                mode="lines+markers",
+                name=group_name,
+            )
+        for account in accounts:
+            account_name = account["name"]
+            if account_name in grouped_names:
+                continue
+            account_df = account_data[account_data["account_name"] == account_name]
+            if account_df.empty:
+                continue
+            account_df = account_df.sort_values("date")
+            account_df["date"] = pd.to_datetime(account_df["date"])
+            fig_account.add_scatter(
+                x=account_df["date"],
+                y=account_df["value"],
+                mode="lines+markers",
+                name=account_name,
+            )
+        fig_account.update_layout(
+            xaxis_title="Date",
+            yaxis_title="Value (GBP £)",
+            hovermode="x unified"
+        )
+        st.plotly_chart(fig_account, use_container_width=True)
         
         # Historical Distribution Analysis
         st.subheader("Historical Distribution Analysis")

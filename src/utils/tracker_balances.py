@@ -52,3 +52,69 @@ def latest_balances_from_account_df(
             continue
         rows.append({"name": cat_name, "value": total})
     return rows
+
+
+def custom_group_name_error(
+    name: str,
+    existing_group_names: list[str],
+    account_names: list[str],
+) -> str | None:
+    """Reject a blank name, a case-insensitive duplicate, or an account's name."""
+    cleaned = name.strip()
+    if not cleaned:
+        return "Enter a group name."
+    key = cleaned.casefold()
+    if any(existing.casefold() == key for existing in existing_group_names):
+        return f"A group named '{cleaned}' already exists."
+    if any(account.casefold() == key for account in account_names):
+        return "That name matches an account. Choose a different group name."
+    return None
+
+
+def normalize_custom_groups(groups: list[dict], accounts: list[dict]) -> list[dict]:
+    """Keep session groups keyed by account id, limited to accounts that still exist.
+
+    Accepts ``{"name", "account_ids"}`` and legacy ``{"name", "accounts": [names]}``.
+    Member order follows ``accounts``. Deleted ids are dropped. A group with no
+    remaining accounts is kept so it can be removed in the UI.
+    """
+    name_to_id: dict[str, str] = {}
+    for account in accounts:
+        name_to_id.setdefault(account["name"], str(account["id"]))
+
+    normalized = []
+    for group in groups:
+        raw_ids = group.get("account_ids")
+        if raw_ids is None:
+            raw_ids = [
+                name_to_id[member]
+                for member in group.get("accounts", [])
+                if member in name_to_id
+            ]
+        wanted = {str(account_id) for account_id in raw_ids}
+        live_ids = []
+        seen = set()
+        for account in accounts:
+            account_id = str(account["id"])
+            if account_id in wanted and account_id not in seen:
+                seen.add(account_id)
+                live_ids.append(account_id)
+        normalized.append({"name": group["name"], "account_ids": live_ids})
+    return normalized
+
+
+def custom_group_members(
+    groups: list[dict],
+    accounts: list[dict],
+) -> list[tuple[str, list[str]]]:
+    """Current account names for each group, in account-list order."""
+    id_to_name = {str(account["id"]): account["name"] for account in accounts}
+    members = []
+    for group in groups:
+        names = []
+        for account_id in group.get("account_ids", []):
+            name = id_to_name.get(str(account_id))
+            if name is not None and name not in names:
+                names.append(name)
+        members.append((group["name"], names))
+    return members
