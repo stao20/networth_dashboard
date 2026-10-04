@@ -85,6 +85,16 @@ class SupabaseHandler(DatabaseHandler):
         supabase_key = st.secrets["supabase"]["key"]
         self.supabase = create_client(supabase_url, supabase_key)
 
+    @classmethod
+    def from_env(cls) -> "SupabaseHandler":
+        """Service-role client from env (CLI / GitHub Actions; no Streamlit)."""
+        handler = cls.__new__(cls)
+        handler.supabase = create_client(
+            os.environ["SUPABASE_URL"],
+            os.environ["SUPABASE_SERVICE_KEY"],
+        )
+        return handler
+
     def get_or_create_user(self, google_id: str, email: str, name: str) -> dict:
         """Get or create a user in the database"""
         try:

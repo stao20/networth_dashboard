@@ -1,0 +1,19 @@
+name: Month-end account sync
+on:
+  schedule:
+    - cron: "30 0 1 * *"
+  workflow_dispatch:
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: src
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+      - run: uv run python -m utils.sync.month_end
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SYNC_CREDENTIALS_KEY: ${{ secrets.SYNC_CREDENTIALS_KEY }}
