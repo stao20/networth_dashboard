@@ -456,7 +456,9 @@ class SupabaseHandler(DatabaseHandler):
     # Account value sync
     # =============================================================
 
-    def list_provider_connections(self, user_id: str) -> list[dict]:
+    # List helpers below return [] on error for the UI; sync/undo pass strict=True so a
+    # DB failure aborts the run instead of looking like "nothing to do".
+    def list_provider_connections(self, user_id: str, *, strict: bool = False) -> list[dict]:
         try:
             response = (
                 self.supabase.table("provider_connections")
@@ -468,6 +470,8 @@ class SupabaseHandler(DatabaseHandler):
             return response.data if response.data else []
         except Exception as e:
             logging.error(f"Error in list_provider_connections: {str(e)}")
+            if strict:
+                raise
             return []
 
     def upsert_provider_connection(
@@ -552,6 +556,25 @@ class SupabaseHandler(DatabaseHandler):
             logging.error(f"Error in touch_provider_connection_synced: {str(e)}")
             raise
 
+    def update_provider_connection_credentials(
+        self, connection_id: str, credentials_encrypted: str
+    ) -> None:
+        try:
+            (
+                self.supabase.table("provider_connections")
+                .update(
+                    {
+                        "credentials_encrypted": credentials_encrypted,
+                        "updated_at": "now()",
+                    }
+                )
+                .eq("id", connection_id)
+                .execute()
+            )
+        except Exception as e:
+            logging.error(f"Error in update_provider_connection_credentials: {str(e)}")
+            raise
+
     def delete_provider_connection(self, connection_id: str) -> None:
         try:
             self.supabase.table("provider_connections").delete().eq(
@@ -561,7 +584,7 @@ class SupabaseHandler(DatabaseHandler):
             logging.error(f"Error in delete_provider_connection: {str(e)}")
             raise
 
-    def list_account_mappings(self, user_id: str) -> list[dict]:
+    def list_account_mappings(self, user_id: str, *, strict: bool = False) -> list[dict]:
         try:
             response = (
                 self.supabase.table("account_mappings")
@@ -573,6 +596,8 @@ class SupabaseHandler(DatabaseHandler):
             return response.data if response.data else []
         except Exception as e:
             logging.error(f"Error in list_account_mappings: {str(e)}")
+            if strict:
+                raise
             return []
 
     def upsert_account_mapping(
@@ -780,7 +805,7 @@ class SupabaseHandler(DatabaseHandler):
             logging.error(f"Error in get_sync_run: {str(e)}")
             return None
 
-    def list_sync_run_items(self, run_id: str) -> list[dict]:
+    def list_sync_run_items(self, run_id: str, *, strict: bool = False) -> list[dict]:
         try:
             response = (
                 self.supabase.table("sync_run_items")
@@ -792,7 +817,41 @@ class SupabaseHandler(DatabaseHandler):
             return response.data if response.data else []
         except Exception as e:
             logging.error(f"Error in list_sync_run_items: {str(e)}")
+            if strict:
+                raise
             return []
+
+    def list_later_written_account_ids(
+        self, user_id: str, as_of_date, after_started_at: str
+    ) -> set[str]:
+        """Account ids written for ``as_of_date`` by non-undone runs started after a run."""
+        try:
+            as_of_str = (
+                as_of_date.isoformat() if hasattr(as_of_date, "isoformat") else str(as_of_date)
+            )
+            runs = (
+                self.supabase.table("sync_runs")
+                .select("id")
+                .eq("user_id", user_id)
+                .eq("as_of_date", as_of_str)
+                .gt("started_at", after_started_at)
+                .is_("undone_at", "null")
+                .execute()
+            )
+            run_ids = [r["id"] for r in runs.data or []]
+            if not run_ids:
+                return set()
+            items = (
+                self.supabase.table("sync_run_items")
+                .select("account_id")
+                .in_("sync_run_id", run_ids)
+                .eq("outcome", "written")
+                .execute()
+            )
+            return {i["account_id"] for i in items.data or [] if i.get("account_id")}
+        except Exception as e:
+            logging.error(f"Error in list_later_written_account_ids: {str(e)}")
+            raise
 
     def mark_sync_run_undone(
         self, run_id: str, notes: str | None = None
@@ -833,6 +892,25 @@ class SupabaseHandler(DatabaseHandler):
                 f"Error in list_user_ids_with_active_connections: {str(e)}"
             )
             return []
+
+    _SCHEDULED_SYNC_STATUSES = ("active", "needs_reauth", "error")
+
+    def list_user_ids_for_scheduled_sync(self) -> list[str]:
+        """Users with any non-disabled connection, so broken connections get reported.
+
+        Raises on DB errors so the scheduled job fails loudly.
+        """
+        try:
+            response = (
+                self.supabase.table("provider_connections")
+                .select("user_id")
+                .in_("status", list(self._SCHEDULED_SYNC_STATUSES))
+                .execute()
+            )
+        except Exception as e:
+            logging.error(f"Error in list_user_ids_for_scheduled_sync: {str(e)}")
+            raise
+        return list(dict.fromkeys(row["user_id"] for row in response.data or []))
 
     # =============================================================
     # Weight Loss Tracker

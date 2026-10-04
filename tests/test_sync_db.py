@@ -157,6 +157,92 @@ def test_touch_provider_connection_synced(handler, fake_supabase):
     assert update_args[0]["last_error"] is None
 
 
+def test_update_provider_connection_credentials_keeps_status(handler, fake_supabase):
+    fake_supabase.set_table("provider_connections", [{"id": "conn-1"}])
+    handler.update_provider_connection_credentials("conn-1", "new-enc")
+    chain = fake_supabase._tables["provider_connections"].calls
+    update_args = next(c[1] for c in chain if c[0] == "update")
+    assert update_args[0]["credentials_encrypted"] == "new-enc"
+    assert "status" not in update_args[0]
+    eq_pairs = {c[1][0]: c[1][1] for c in chain if c[0] == "eq"}
+    assert eq_pairs == {"id": "conn-1"}
+
+
+@pytest.mark.parametrize(
+    "method, args",
+    [
+        ("list_provider_connections", ("u1",)),
+        ("list_account_mappings", ("u1",)),
+        ("list_sync_run_items", ("run-1",)),
+    ],
+)
+def test_list_helpers_swallow_errors_by_default_and_raise_when_strict(
+    handler, fake_supabase, method, args
+):
+    fake_supabase.table.side_effect = RuntimeError("db down")
+    assert getattr(handler, method)(*args) == []
+    with pytest.raises(RuntimeError):
+        getattr(handler, method)(*args, strict=True)
+
+
+def test_list_user_ids_for_scheduled_sync_includes_unhealthy_connections(
+    handler, fake_supabase
+):
+    fake_supabase.set_table(
+        "provider_connections",
+        [
+            {"user_id": "u1", "status": "active"},
+            {"user_id": "u2", "status": "needs_reauth"},
+            {"user_id": "u1", "status": "error"},
+        ],
+    )
+    assert handler.list_user_ids_for_scheduled_sync() == ["u1", "u2"]
+    chain = fake_supabase._tables["provider_connections"].calls
+    in_args = next(c[1] for c in chain if c[0] == "in_")
+    assert in_args[0] == "status"
+    assert set(in_args[1]) == {"active", "needs_reauth", "error"}
+
+
+def test_list_user_ids_for_scheduled_sync_raises_on_db_error(handler, fake_supabase):
+    fake_supabase.table.side_effect = RuntimeError("db down")
+    with pytest.raises(RuntimeError):
+        handler.list_user_ids_for_scheduled_sync()
+
+
+def test_list_later_written_account_ids(handler, fake_supabase, sample_user_id):
+    fake_supabase.set_table("sync_runs", [{"id": "run-2"}, {"id": "run-3"}])
+    fake_supabase.set_table(
+        "sync_run_items",
+        [{"account_id": "acc-1"}, {"account_id": "acc-2"}, {"account_id": None}],
+    )
+    out = handler.list_later_written_account_ids(
+        sample_user_id, date(2026, 9, 30), "2026-10-01T10:00:00+00:00"
+    )
+    assert out == {"acc-1", "acc-2"}
+
+    runs_chain = fake_supabase._tables["sync_runs"].calls
+    runs_eq = {c[1][0]: c[1][1] for c in runs_chain if c[0] == "eq"}
+    assert runs_eq == {"user_id": sample_user_id, "as_of_date": "2026-09-30"}
+    assert ("gt", ("started_at", "2026-10-01T10:00:00+00:00"), {}) in runs_chain
+    assert ("is_", ("undone_at", "null"), {}) in runs_chain
+
+    items_chain = fake_supabase._tables["sync_run_items"].calls
+    assert ("in_", ("sync_run_id", ["run-2", "run-3"]), {}) in items_chain
+    assert ("eq", ("outcome", "written"), {}) in items_chain
+
+
+def test_list_later_written_account_ids_no_later_runs(handler, fake_supabase):
+    fake_supabase.set_table("sync_runs", [])
+    assert handler.list_later_written_account_ids("u1", "2026-09-30", "t") == set()
+    assert "sync_run_items" not in fake_supabase._tables
+
+
+def test_list_later_written_account_ids_raises_on_db_error(handler, fake_supabase):
+    fake_supabase.table.side_effect = RuntimeError("db down")
+    with pytest.raises(RuntimeError):
+        handler.list_later_written_account_ids("u1", "2026-09-30", "t")
+
+
 def test_list_user_ids_with_active_connections(handler, fake_supabase):
     fake_supabase.set_table(
         "provider_connections",

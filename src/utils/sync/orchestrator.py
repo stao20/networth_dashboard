@@ -2,15 +2,25 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import date
 from typing import Callable
 
-from utils.providers.base import BalanceProvider, ProviderAuthError, ProviderError
+from utils.providers.base import (
+    BalanceProvider,
+    NormalizedBalance,
+    ProviderAuthError,
+    ProviderError,
+    ProviderTransientError,
+)
 
 logger = logging.getLogger(__name__)
 
 ConvertToGbp = Callable[[float, str], "float | None"]
 DecryptCredentials = Callable[[str], str]
+EncryptCredentials = Callable[[str], str]
+# (decrypted credentials, force) -> credentials holding a usable token
+CredentialRefresher = Callable[[dict, bool], dict]
 
 
 def default_providers() -> dict[str, BalanceProvider]:
@@ -21,6 +31,26 @@ def default_providers() -> dict[str, BalanceProvider]:
         "trading212": Trading212Provider(),
         "open_banking": OpenBankingProvider(),
     }
+
+
+def default_credential_refreshers(
+    secret_id: str | None = None,
+    secret_key: str | None = None,
+) -> dict[str, CredentialRefresher]:
+    """Token refreshers per provider; GoCardless app secrets default to env vars.
+
+    Without app secrets Open Banking can still use the stored refresh token, but
+    cannot request a new token pair once that refresh token has expired.
+    """
+    from utils.providers import open_banking
+
+    sid = secret_id or os.environ.get("GOCARDLESS_SECRET_ID") or None
+    skey = secret_key or os.environ.get("GOCARDLESS_SECRET_KEY") or None
+
+    def refresh_open_banking(credentials: dict, force: bool) -> dict:
+        return open_banking.ensure_access_token(credentials, sid, skey, force=force)
+
+    return {"open_banking": refresh_open_banking}
 
 
 def _default_convert_to_gbp(amount: float, currency: str) -> float | None:
@@ -35,8 +65,64 @@ def _default_decrypt(token: str) -> str:
     return decrypt_secret(token)
 
 
+def _default_encrypt(plaintext: str) -> str:
+    from utils.crypto import encrypt_secret
+
+    return encrypt_secret(plaintext)
+
+
 def _reason(code: str, exc: BaseException | None = None) -> str:
     return f"{code}: {type(exc).__name__}" if exc is not None else code
+
+
+def _refresh_credentials(
+    db,
+    connection: dict,
+    refresher: CredentialRefresher,
+    encrypt: EncryptCredentials,
+    *,
+    force: bool,
+) -> None:
+    current = connection["credentials"]
+    updated = refresher(current, force)
+    if updated == current:
+        return
+    connection["credentials"] = updated
+    try:
+        db.update_provider_connection_credentials(
+            connection["id"], encrypt(json.dumps(updated))
+        )
+    except Exception as exc:
+        # The refreshed token still works for this run; the next run refreshes again.
+        logger.error(
+            "Could not persist refreshed credentials for connection %s: %s",
+            connection.get("id"),
+            type(exc).__name__,
+        )
+
+
+def fetch_balances(
+    db,
+    connection: dict,
+    provider: BalanceProvider,
+    refresher: CredentialRefresher | None = None,
+    encrypt_credentials: EncryptCredentials | None = None,
+) -> list[NormalizedBalance]:
+    """Fetch balances for a connection with decrypted ``credentials`` attached.
+
+    With a refresher, expired tokens are refreshed before the fetch and once more after
+    an auth rejection; changed credentials are re-encrypted and saved without touching
+    the connection status. Provider errors propagate to the caller.
+    """
+    if refresher is None:
+        return provider.list_balances(connection)
+    encrypt = encrypt_credentials or _default_encrypt
+    _refresh_credentials(db, connection, refresher, encrypt, force=False)
+    try:
+        return provider.list_balances(connection)
+    except ProviderAuthError:
+        _refresh_credentials(db, connection, refresher, encrypt, force=True)
+        return provider.list_balances(connection)
 
 
 def run_sync(
@@ -48,10 +134,18 @@ def run_sync(
     providers: dict[str, BalanceProvider] | None = None,
     convert_to_gbp: ConvertToGbp | None = None,
     decrypt_credentials: DecryptCredentials | None = None,
+    encrypt_credentials: EncryptCredentials | None = None,
+    credential_refreshers: dict[str, CredentialRefresher] | None = None,
 ) -> dict:
     providers = providers if providers is not None else default_providers()
+    refreshers = (
+        credential_refreshers
+        if credential_refreshers is not None
+        else default_credential_refreshers()
+    )
     convert = convert_to_gbp or _default_convert_to_gbp
     decrypt = decrypt_credentials or _default_decrypt
+    encrypt = encrypt_credentials or _default_encrypt
     date_str = as_of_date.isoformat()
 
     run = db.create_sync_run(user_id, trigger, as_of_date)
@@ -80,13 +174,42 @@ def run_sync(
             )
 
     try:
-        connections = db.list_provider_connections(user_id)
-        mappings = db.list_account_mappings(user_id)
+        connections = db.list_provider_connections(user_id, strict=True)
+        mappings = db.list_account_mappings(user_id, strict=True)
         mapped_external = {
             (m["provider_connection_id"], m["external_account_id"]): m for m in mappings
         }
         seen_mapped: set[tuple[str, str]] = set()
         fetched_connections: dict[str, dict] = {}
+
+        def record_mapped(
+            connection: dict, outcome: str, reason: str, *, fallback: bool
+        ) -> None:
+            """One item per mapped account of a connection that produced no balances.
+
+            With ``fallback``, a connection without mappings still gets one item so the
+            failure is visible in the run history.
+            """
+            provider_name = connection.get("provider", "")
+            connection_id = connection.get("id")
+            mapped = [
+                (ext, m) for (cid, ext), m in mapped_external.items() if cid == connection_id
+            ]
+            if not mapped:
+                if fallback:
+                    add_item(provider_name, outcome, reason=reason)
+                return
+            for ext, m in mapped:
+                add_item(
+                    provider_name,
+                    outcome,
+                    account_id=m["account_id"],
+                    external_account_id=ext,
+                    reason=reason,
+                )
+
+        def connection_failed(connection: dict, reason: str) -> None:
+            record_mapped(connection, "error", reason, fallback=True)
 
         def sync_balance(provider_name: str, connection_id: str, balance) -> None:
             key = (connection_id, balance.external_account_id)
@@ -157,9 +280,7 @@ def run_sync(
 
             provider = providers.get(provider_name)
             if provider is None:
-                add_item(
-                    provider_name, "error", reason=f"unknown_provider:{provider_name}"
-                )
+                connection_failed(connection, f"unknown_provider:{provider_name}")
                 return
 
             try:
@@ -175,20 +296,28 @@ def run_sync(
                 )
                 reason = _reason("decrypt_failed", exc)
                 set_status(connection_id, "error", reason)
-                add_item(provider_name, "error", reason=reason)
+                connection_failed(connection, reason)
                 return
 
             try:
-                balances = provider.list_balances(connection)
+                balances = fetch_balances(
+                    db, connection, provider, refreshers.get(provider_name), encrypt
+                )
             except ProviderAuthError as exc:
                 reason = _reason("provider_auth_error", exc)
                 set_status(connection_id, "needs_reauth", reason)
-                add_item(provider_name, "error", reason=reason)
+                connection_failed(connection, reason)
+                return
+            except ProviderTransientError as exc:
+                # Retrying later may succeed, so the connection stays active.
+                reason = _reason("provider_unavailable", exc)
+                set_status(connection_id, "active", reason)
+                connection_failed(connection, reason)
                 return
             except ProviderError as exc:
                 reason = _reason("provider_error", exc)
                 set_status(connection_id, "error", reason)
-                add_item(provider_name, "error", reason=reason)
+                connection_failed(connection, reason)
                 return
             except Exception as exc:
                 logger.error(
@@ -198,7 +327,7 @@ def run_sync(
                 )
                 reason = _reason("unexpected_provider_error", exc)
                 set_status(connection_id, "error", reason)
-                add_item(provider_name, "error", reason=reason)
+                connection_failed(connection, reason)
                 return
 
             fetched_connections[connection_id] = connection
@@ -229,7 +358,13 @@ def run_sync(
                 )
 
         for connection in connections:
-            if connection.get("status") != "active":
+            status = connection.get("status")
+            if status == "disabled":
+                record_mapped(connection, "skipped", "connection_disabled", fallback=False)
+                continue
+            if status != "active":
+                reason = "needs_reauth" if status == "needs_reauth" else "connection_error"
+                record_mapped(connection, "error", reason, fallback=False)
                 continue
             try:
                 sync_connection(connection)
