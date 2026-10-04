@@ -1,0 +1,16 @@
+{
+  "id": 12345678,
+  "currency": "GBP",
+  "totalValue": 15432.5,
+  "cash": {
+    "availableToTrade": 200.0,
+    "inPies": 50.0,
+    "reservedForOrders": 0.0
+  },
+  "investments": {
+    "currentValue": 15182.5,
+    "totalCost": 14000.0,
+    "realizedProfitLoss": 100.0,
+    "unrealizedProfitLoss": 1182.5
+  }
+}
