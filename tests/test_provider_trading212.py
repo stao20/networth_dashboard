@@ -4,8 +4,9 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+import requests
 
-from utils.providers.base import ProviderAuthError
+from utils.providers.base import ProviderAuthError, ProviderError, ProviderTransientError
 from utils.providers.trading212 import Trading212Provider
 
 FIXTURE = json.loads(
@@ -45,3 +46,36 @@ def test_401_raises_auth_error(mocker):
         Trading212Provider().list_balances(
             {"credentials": {"api_key": "k", "api_secret": "s"}}
         )
+
+
+@pytest.mark.parametrize("status_code", [429, 500, 503])
+def test_rate_limit_and_server_errors_are_transient(mocker, status_code):
+    resp = MagicMock()
+    resp.status_code = status_code
+    mocker.patch("utils.providers.trading212.requests.get", return_value=resp)
+    with pytest.raises(ProviderTransientError):
+        Trading212Provider().list_balances(
+            {"credentials": {"api_key": "k", "api_secret": "s"}}
+        )
+
+
+def test_timeout_is_transient(mocker):
+    mocker.patch(
+        "utils.providers.trading212.requests.get",
+        side_effect=requests.Timeout("slow"),
+    )
+    with pytest.raises(ProviderTransientError):
+        Trading212Provider().list_balances(
+            {"credentials": {"api_key": "k", "api_secret": "s"}}
+        )
+
+
+def test_client_error_is_not_transient(mocker):
+    resp = MagicMock()
+    resp.status_code = 404
+    mocker.patch("utils.providers.trading212.requests.get", return_value=resp)
+    with pytest.raises(ProviderError) as exc_info:
+        Trading212Provider().list_balances(
+            {"credentials": {"api_key": "k", "api_secret": "s"}}
+        )
+    assert not isinstance(exc_info.value, ProviderTransientError)

@@ -5,7 +5,13 @@ from decimal import Decimal
 
 import requests
 
-from utils.providers.base import NormalizedBalance, ProviderAuthError, ProviderError
+from utils.providers.base import (
+    NormalizedBalance,
+    ProviderAuthError,
+    ProviderError,
+    ProviderTransientError,
+    is_transient_status,
+)
 
 DEFAULT_BASE = "https://live.trading212.com/api/v0"
 
@@ -23,11 +29,15 @@ class Trading212Provider:
         url = f"{base}/equity/account/summary"
         try:
             resp = requests.get(url, headers=headers, timeout=30)
+        except (requests.Timeout, requests.ConnectionError) as e:
+            raise ProviderTransientError(f"Trading 212 request failed: {e}") from e
         except requests.RequestException as e:
             raise ProviderError(f"Trading 212 request failed: {e}") from e
 
         if resp.status_code in (401, 403):
             raise ProviderAuthError("Trading 212 credentials rejected")
+        if is_transient_status(resp.status_code):
+            raise ProviderTransientError(f"Trading 212 HTTP {resp.status_code}")
         if resp.status_code != 200:
             raise ProviderError(f"Trading 212 HTTP {resp.status_code}")
 

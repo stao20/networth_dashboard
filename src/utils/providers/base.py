@@ -13,6 +13,17 @@ class ProviderAuthError(ProviderError):
     """Credentials invalid or consent expired."""
 
 
+class ProviderTransientError(ProviderError):
+    """Timeout, rate limit or server error; retrying later may succeed."""
+
+
+TRANSIENT_STATUS_CODES = frozenset({408, 425, 429})
+
+
+def is_transient_status(status_code: int) -> bool:
+    return status_code in TRANSIENT_STATUS_CODES or status_code >= 500
+
+
 @dataclass(frozen=True)
 class NormalizedBalance:
     external_account_id: str
