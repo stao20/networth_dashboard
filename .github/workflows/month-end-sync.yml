@@ -17,3 +17,6 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           SYNC_CREDENTIALS_KEY: ${{ secrets.SYNC_CREDENTIALS_KEY }}
+          # Optional: lets Open Banking request new tokens once the stored refresh token expires.
+          GOCARDLESS_SECRET_ID: ${{ secrets.GOCARDLESS_SECRET_ID }}
+          GOCARDLESS_SECRET_KEY: ${{ secrets.GOCARDLESS_SECRET_KEY }}

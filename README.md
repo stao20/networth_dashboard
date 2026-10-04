@@ -76,6 +76,15 @@ A Streamlit-based dashboard for tracking your net worth across different account
    GitHub Actions month-end job needs repository secrets:
    `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `SYNC_CREDENTIALS_KEY`.
 
+   Optional repository secrets `GOCARDLESS_SECRET_ID` and `GOCARDLESS_SECRET_KEY`
+   (same values as `[gocardless]` above) let the job refresh Open Banking tokens.
+   Without them the job can only use each connection's stored refresh token, and
+   connections whose refresh token has expired are marked "needs re-authentication".
+
+   The job exits non-zero when any user's sync is partial or failed, including
+   mapped accounts on connections that need re-authentication or are in error,
+   so a red workflow run means some balances were not updated.
+
 6. **Initialize Supabase project**
    ```bash
    npx supabase init
