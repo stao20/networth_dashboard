@@ -13,6 +13,19 @@ def test_round_trip(monkeypatch):
 
 def test_load_fernet_key_requires_env(monkeypatch):
     monkeypatch.delenv("SYNC_CREDENTIALS_KEY", raising=False)
+
+    import sys
+    from types import ModuleType
+
+    fake_st = ModuleType("streamlit")
+
+    class Secrets:
+        def get(self, key, default=None):
+            return {} if key == "sync" else default
+
+    fake_st.secrets = Secrets()
+    monkeypatch.setitem(sys.modules, "streamlit", fake_st)
+
     try:
         load_fernet_key()
         assert False, "expected RuntimeError"
