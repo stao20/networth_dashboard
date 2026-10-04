@@ -119,3 +119,56 @@ class EarnedBadge:
     points: int = 0
     metadata: Optional[dict] = None
     created_at: Optional[datetime] = None
+
+
+@dataclass
+class ProviderConnection:
+    id: Optional[str]
+    user_id: str
+    provider: str
+    status: str
+    credentials_encrypted: str
+    external_connection_id: str
+    display_name: Optional[str] = None
+    last_synced_at: Optional[datetime] = None
+    last_error: Optional[str] = None
+
+
+@dataclass
+class AccountMapping:
+    id: Optional[str]
+    user_id: str
+    provider_connection_id: str
+    external_account_id: str
+    external_account_name: str
+    account_id: str
+
+
+@dataclass
+class SyncRun:
+    id: Optional[str]
+    user_id: str
+    trigger: str
+    as_of_date: _date
+    status: str = "running"
+    written_count: int = 0
+    skipped_count: int = 0
+    error_count: int = 0
+    notes: Optional[str] = None
+    undone_at: Optional[datetime] = None
+
+
+@dataclass
+class SyncRunItem:
+    id: Optional[str]
+    sync_run_id: str
+    provider: str
+    outcome: str
+    account_id: Optional[str] = None
+    external_account_id: Optional[str] = None
+    reason: Optional[str] = None
+    external_amount: Optional[float] = None
+    external_currency: Optional[str] = None
+    previous_value_gbp: Optional[float] = None
+    new_value_gbp: Optional[float] = None
+    had_previous: bool = False
