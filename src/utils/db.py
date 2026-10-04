@@ -443,6 +443,369 @@ class SupabaseHandler(DatabaseHandler):
             raise
 
     # =============================================================
+    # Account value sync
+    # =============================================================
+
+    def list_provider_connections(self, user_id: str) -> list[dict]:
+        try:
+            response = (
+                self.supabase.table("provider_connections")
+                .select("*")
+                .eq("user_id", user_id)
+                .order("created_at", desc=False)
+                .execute()
+            )
+            return response.data if response.data else []
+        except Exception as e:
+            logging.error(f"Error in list_provider_connections: {str(e)}")
+            return []
+
+    def upsert_provider_connection(
+        self,
+        user_id: str,
+        provider: str,
+        external_connection_id: str,
+        credentials_encrypted: str,
+        display_name: str | None = None,
+        status: str = "active",
+    ) -> dict:
+        try:
+            payload = {
+                "user_id": user_id,
+                "provider": provider,
+                "external_connection_id": external_connection_id,
+                "credentials_encrypted": credentials_encrypted,
+                "status": status,
+                "updated_at": "now()",
+            }
+            if display_name is not None:
+                payload["display_name"] = display_name
+            (
+                self.supabase.table("provider_connections")
+                .upsert(
+                    payload,
+                    on_conflict="user_id,provider,external_connection_id",
+                )
+                .execute()
+            )
+            response = (
+                self.supabase.table("provider_connections")
+                .select("*")
+                .eq("user_id", user_id)
+                .eq("provider", provider)
+                .eq("external_connection_id", external_connection_id)
+                .limit(1)
+                .execute()
+            )
+            return response.data[0]
+        except Exception as e:
+            logging.error(f"Error in upsert_provider_connection: {str(e)}")
+            raise
+
+    def update_provider_connection_status(
+        self,
+        connection_id: str,
+        status: str,
+        last_error: str | None = None,
+    ) -> dict:
+        try:
+            patch: dict = {"status": status, "updated_at": "now()"}
+            if last_error is not None:
+                patch["last_error"] = last_error
+            response = (
+                self.supabase.table("provider_connections")
+                .update(patch)
+                .eq("id", connection_id)
+                .execute()
+            )
+            return response.data[0] if response.data else {}
+        except Exception as e:
+            logging.error(f"Error in update_provider_connection_status: {str(e)}")
+            raise
+
+    def delete_provider_connection(self, connection_id: str) -> None:
+        try:
+            self.supabase.table("provider_connections").delete().eq(
+                "id", connection_id
+            ).execute()
+        except Exception as e:
+            logging.error(f"Error in delete_provider_connection: {str(e)}")
+            raise
+
+    def list_account_mappings(self, user_id: str) -> list[dict]:
+        try:
+            response = (
+                self.supabase.table("account_mappings")
+                .select("*")
+                .eq("user_id", user_id)
+                .order("created_at", desc=False)
+                .execute()
+            )
+            return response.data if response.data else []
+        except Exception as e:
+            logging.error(f"Error in list_account_mappings: {str(e)}")
+            return []
+
+    def upsert_account_mapping(
+        self,
+        user_id: str,
+        provider_connection_id: str,
+        external_account_id: str,
+        external_account_name: str,
+        account_id: str,
+    ) -> dict:
+        try:
+            payload = {
+                "user_id": user_id,
+                "provider_connection_id": provider_connection_id,
+                "external_account_id": external_account_id,
+                "external_account_name": external_account_name,
+                "account_id": account_id,
+                "updated_at": "now()",
+            }
+            (
+                self.supabase.table("account_mappings")
+                .upsert(
+                    payload,
+                    on_conflict="provider_connection_id,external_account_id",
+                )
+                .execute()
+            )
+            response = (
+                self.supabase.table("account_mappings")
+                .select("*")
+                .eq("provider_connection_id", provider_connection_id)
+                .eq("external_account_id", external_account_id)
+                .limit(1)
+                .execute()
+            )
+            return response.data[0]
+        except Exception as e:
+            logging.error(f"Error in upsert_account_mapping: {str(e)}")
+            raise
+
+    def delete_account_mapping(self, mapping_id: str) -> None:
+        try:
+            self.supabase.table("account_mappings").delete().eq(
+                "id", mapping_id
+            ).execute()
+        except Exception as e:
+            logging.error(f"Error in delete_account_mapping: {str(e)}")
+            raise
+
+    def get_account_value(self, account_id: str, date: str) -> float | None:
+        try:
+            response = (
+                self.supabase.table("account_values")
+                .select("value")
+                .eq("account_id", account_id)
+                .eq("date", date)
+                .limit(1)
+                .execute()
+            )
+            rows = response.data or []
+            if not rows:
+                return None
+            return float(rows[0]["value"])
+        except Exception as e:
+            logging.error(f"Error in get_account_value: {str(e)}")
+            raise
+
+    def delete_account_value(self, account_id: str, date: str) -> None:
+        try:
+            (
+                self.supabase.table("account_values")
+                .delete()
+                .eq("account_id", account_id)
+                .eq("date", date)
+                .execute()
+            )
+        except Exception as e:
+            logging.error(f"Error in delete_account_value: {str(e)}")
+            raise
+
+    def create_sync_run(self, user_id: str, trigger: str, as_of_date) -> dict:
+        try:
+            if hasattr(as_of_date, "isoformat"):
+                as_of_str = as_of_date.isoformat()
+            else:
+                as_of_str = str(as_of_date)
+            response = (
+                self.supabase.table("sync_runs")
+                .insert(
+                    {
+                        "user_id": user_id,
+                        "trigger": trigger,
+                        "as_of_date": as_of_str,
+                        "status": "running",
+                    }
+                )
+                .execute()
+            )
+            return response.data[0]
+        except Exception as e:
+            logging.error(f"Error in create_sync_run: {str(e)}")
+            raise
+
+    def finalize_sync_run(
+        self,
+        run_id: str,
+        status: str,
+        written_count: int,
+        skipped_count: int,
+        error_count: int,
+        notes: str | None = None,
+    ) -> dict:
+        try:
+            patch: dict = {
+                "status": status,
+                "written_count": int(written_count),
+                "skipped_count": int(skipped_count),
+                "error_count": int(error_count),
+                "finished_at": "now()",
+            }
+            if notes is not None:
+                patch["notes"] = notes
+            response = (
+                self.supabase.table("sync_runs")
+                .update(patch)
+                .eq("id", run_id)
+                .execute()
+            )
+            return response.data[0] if response.data else {}
+        except Exception as e:
+            logging.error(f"Error in finalize_sync_run: {str(e)}")
+            raise
+
+    def add_sync_run_item(
+        self,
+        sync_run_id: str,
+        provider: str,
+        outcome: str,
+        *,
+        account_id: str | None = None,
+        external_account_id: str | None = None,
+        reason: str | None = None,
+        external_amount: float | None = None,
+        external_currency: str | None = None,
+        previous_value_gbp: float | None = None,
+        new_value_gbp: float | None = None,
+        had_previous: bool = False,
+    ) -> dict:
+        try:
+            payload: dict = {
+                "sync_run_id": sync_run_id,
+                "provider": provider,
+                "outcome": outcome,
+                "had_previous": bool(had_previous),
+            }
+            if account_id is not None:
+                payload["account_id"] = account_id
+            if external_account_id is not None:
+                payload["external_account_id"] = external_account_id
+            if reason is not None:
+                payload["reason"] = reason
+            if external_amount is not None:
+                payload["external_amount"] = "{:.2f}".format(float(external_amount))
+            if external_currency is not None:
+                payload["external_currency"] = external_currency
+            if previous_value_gbp is not None:
+                payload["previous_value_gbp"] = "{:.2f}".format(float(previous_value_gbp))
+            if new_value_gbp is not None:
+                payload["new_value_gbp"] = "{:.2f}".format(float(new_value_gbp))
+            response = (
+                self.supabase.table("sync_run_items").insert(payload).execute()
+            )
+            return response.data[0]
+        except Exception as e:
+            logging.error(f"Error in add_sync_run_item: {str(e)}")
+            raise
+
+    def list_sync_runs(self, user_id: str, limit: int = 20) -> list[dict]:
+        try:
+            response = (
+                self.supabase.table("sync_runs")
+                .select("*")
+                .eq("user_id", user_id)
+                .order("started_at", desc=True)
+                .limit(limit)
+                .execute()
+            )
+            return response.data if response.data else []
+        except Exception as e:
+            logging.error(f"Error in list_sync_runs: {str(e)}")
+            return []
+
+    def get_sync_run(self, run_id: str) -> dict | None:
+        try:
+            response = (
+                self.supabase.table("sync_runs")
+                .select("*")
+                .eq("id", run_id)
+                .limit(1)
+                .execute()
+            )
+            rows = response.data or []
+            return rows[0] if rows else None
+        except Exception as e:
+            logging.error(f"Error in get_sync_run: {str(e)}")
+            return None
+
+    def list_sync_run_items(self, run_id: str) -> list[dict]:
+        try:
+            response = (
+                self.supabase.table("sync_run_items")
+                .select("*")
+                .eq("sync_run_id", run_id)
+                .order("created_at", desc=False)
+                .execute()
+            )
+            return response.data if response.data else []
+        except Exception as e:
+            logging.error(f"Error in list_sync_run_items: {str(e)}")
+            return []
+
+    def mark_sync_run_undone(
+        self, run_id: str, notes: str | None = None
+    ) -> dict:
+        try:
+            patch: dict = {"undone_at": "now()"}
+            if notes is not None:
+                patch["notes"] = notes
+            response = (
+                self.supabase.table("sync_runs")
+                .update(patch)
+                .eq("id", run_id)
+                .execute()
+            )
+            return response.data[0] if response.data else {}
+        except Exception as e:
+            logging.error(f"Error in mark_sync_run_undone: {str(e)}")
+            raise
+
+    def list_user_ids_with_active_connections(self) -> list[str]:
+        try:
+            response = (
+                self.supabase.table("provider_connections")
+                .select("user_id")
+                .eq("status", "active")
+                .execute()
+            )
+            seen: set[str] = set()
+            out: list[str] = []
+            for row in response.data or []:
+                uid = row["user_id"]
+                if uid not in seen:
+                    seen.add(uid)
+                    out.append(uid)
+            return out
+        except Exception as e:
+            logging.error(
+                f"Error in list_user_ids_with_active_connections: {str(e)}"
+            )
+            return []
+
+    # =============================================================
     # Weight Loss Tracker
     # =============================================================
 
