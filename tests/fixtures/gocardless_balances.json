@@ -1,0 +1,12 @@
+{
+  "balances": [
+    {
+      "balanceAmount": {"amount": "1250.55", "currency": "GBP"},
+      "balanceType": "interimAvailable"
+    },
+    {
+      "balanceAmount": {"amount": "1300.00", "currency": "GBP"},
+      "balanceType": "closingBooked"
+    }
+  ]
+}
