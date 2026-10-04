@@ -516,7 +516,7 @@ def _render_sync(user_id: str) -> None:
                     _set_flash(
                         "success",
                         f"Undone: {outcome['restored']} restored, {outcome['deleted']} deleted, "
-                        f"{outcome['skipped']} skipped (edited since sync).",
+                        f"{outcome['skipped']} skipped (edited or re-synced since).",
                     )
                     st.rerun()
                 except Exception as e:
