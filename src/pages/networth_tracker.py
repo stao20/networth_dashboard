@@ -11,8 +11,13 @@ from typing import Dict, List
 from config import Config
 from utils.auth import GoogleAuth
 from utils.crypto import decrypt_secret, encrypt_secret, load_fernet_key
-from utils.providers.base import ProviderError
-from utils.providers.open_banking import OpenBankingProvider, create_requisition, exchange_token
+from utils.providers.base import ProviderAuthError, ProviderError
+from utils.providers.open_banking import (
+    OpenBankingProvider,
+    create_requisition,
+    exchange_token,
+    refresh_access_token,
+)
 from utils.providers.trading212 import DEFAULT_BASE as TRADING212_LIVE_BASE, Trading212Provider
 from utils.sync.orchestrator import run_sync
 from utils.sync.undo import undo_sync_run
@@ -65,15 +70,93 @@ def _sync_key_error():
         return str(e)
 
 
+def _set_flash(kind: str, text: str) -> None:
+    """Queue a message that survives the next st.rerun()."""
+    st.session_state.sync_flash = (kind, text)
+
+
+def _show_flash() -> None:
+    flash = st.session_state.pop("sync_flash", None)
+    if not flash:
+        return
+    kind, text = flash
+    {"success": st.success, "error": st.error, "info": st.info, "warning": st.warning}.get(
+        kind, st.info
+    )(text)
+
+
 def _connection_label(conn: dict) -> str:
     provider = PROVIDER_LABELS.get(conn["provider"], conn["provider"])
     return f"{provider} - {conn.get('display_name') or conn['external_connection_id']}"
 
 
-def _fetch_external_accounts(connections: list) -> tuple:
-    """Read-only balance fetch across active connections. Returns (accounts, errors)."""
+def _refresh_open_banking_connection(user_id: str, conn: dict) -> tuple:
+    """Refresh (or re-issue) GoCardless tokens for a connection.
+
+    Returns (ok, message). On success the credentials are re-encrypted and the
+    connection is set back to active; on failure the connection is left in
+    needs_reauth.
+    """
+    try:
+        creds = json.loads(decrypt_secret(conn["credentials_encrypted"]))
+    except Exception as e:
+        return False, f"Could not read stored credentials: {type(e).__name__}"
+
+    base_kwargs = {"base_url": creds["base_url"]} if creds.get("base_url") else {}
+    refresh_token = creds.get("refresh_token")
+    tokens = None
+    failure = None
+
+    if refresh_token:
+        try:
+            tokens = refresh_access_token(refresh_token, **base_kwargs)
+        except ProviderError as e:
+            failure = str(e)
+        except Exception as e:
+            failure = type(e).__name__
+    else:
+        failure = "no refresh token stored"
+
+    if not tokens or not tokens.get("access"):
+        gc = _gocardless_secrets()
+        if gc is not None:
+            try:
+                tokens = exchange_token(gc[0], gc[1], **base_kwargs)
+                failure = None
+            except ProviderError as e:
+                failure = f"{failure}; new token request failed: {e}"
+            except Exception as e:
+                failure = f"{failure}; new token request failed: {type(e).__name__}"
+        if not tokens or not tokens.get("access"):
+            return False, f"Token refresh failed ({failure or 'no access token returned'})."
+
+    new_creds = dict(creds)
+    new_creds["access_token"] = tokens["access"]
+    new_creds["refresh_token"] = tokens.get("refresh") or refresh_token
+    try:
+        db_handler.upsert_provider_connection(
+            user_id,
+            conn["provider"],
+            conn["external_connection_id"],
+            encrypt_secret(json.dumps(new_creds)),
+            display_name=conn.get("display_name"),
+            status="active",
+        )
+        db_handler.update_provider_connection_status(conn["id"], "active", last_error="")
+    except Exception as e:
+        return False, f"Could not save refreshed tokens: {type(e).__name__}"
+    return True, "Tokens refreshed."
+
+
+def _fetch_external_accounts(user_id: str, connections: list) -> tuple:
+    """Read-only balance fetch across active connections.
+
+    Returns (accounts, errors, changed). Open Banking connections that reject
+    their token are refreshed once and retried; `changed` is True when a
+    connection's stored status/credentials were modified.
+    """
     providers = {"trading212": Trading212Provider(), "open_banking": OpenBankingProvider()}
-    found, errors = [], []
+    found, errors, changed = [], [], False
     for conn in connections:
         if conn.get("status") != "active":
             continue
@@ -83,7 +166,29 @@ def _fetch_external_accounts(connections: list) -> tuple:
         try:
             row = dict(conn)
             row["credentials"] = json.loads(decrypt_secret(conn["credentials_encrypted"]))
-            for bal in provider.list_balances(row):
+            try:
+                balances = provider.list_balances(row)
+            except ProviderAuthError:
+                if conn["provider"] != "open_banking":
+                    raise
+                ok, message = _refresh_open_banking_connection(user_id, conn)
+                if not ok:
+                    changed = True
+                    try:
+                        db_handler.update_provider_connection_status(
+                            conn["id"], "needs_reauth", last_error=message
+                        )
+                    except Exception:
+                        pass
+                    errors.append(f"{_connection_label(conn)}: {message} Reconnect required.")
+                    continue
+                changed = True
+                refreshed = db_handler.list_provider_connections(user_id)
+                updated = next((c for c in refreshed if c["id"] == conn["id"]), conn)
+                row = dict(updated)
+                row["credentials"] = json.loads(decrypt_secret(updated["credentials_encrypted"]))
+                balances = provider.list_balances(row)
+            for bal in balances:
                 found.append(
                     {
                         "connection_id": conn["id"],
@@ -98,7 +203,7 @@ def _fetch_external_accounts(connections: list) -> tuple:
             errors.append(f"{_connection_label(conn)}: {e}")
         except Exception as e:
             errors.append(f"{_connection_label(conn)}: {type(e).__name__}")
-    return found, errors
+    return found, errors, changed
 
 
 def _render_trading212_connect(user_id: str) -> None:
@@ -126,7 +231,7 @@ def _render_trading212_connect(user_id: str) -> None:
                     encrypt_secret(json.dumps(creds)),
                     display_name=display_name.strip() or "Trading 212",
                 )
-                st.success("Trading 212 connection saved.")
+                _set_flash("success", "Trading 212 connection saved.")
                 st.rerun()
             except Exception as e:
                 st.error(f"Could not save connection: {type(e).__name__}")
@@ -204,7 +309,7 @@ def _render_open_banking_connect(user_id: str) -> None:
                     )
                     st.session_state.pop("ob_pending_link", None)
                     st.session_state.pop("ob_pending_requisition", None)
-                    st.success("Bank connection saved.")
+                    _set_flash("success", "Bank connection saved.")
                     st.rerun()
                 except ProviderError as e:
                     st.error(f"Could not finish linking: {e}")
@@ -212,7 +317,7 @@ def _render_open_banking_connect(user_id: str) -> None:
                     st.error(f"Could not finish linking: {type(e).__name__}")
 
 
-def _render_connections(connections: list) -> None:
+def _render_connections(user_id: str, connections: list) -> None:
     if not connections:
         st.caption("No connections yet.")
         return
@@ -231,9 +336,20 @@ def _render_connections(connections: list) -> None:
             try:
                 db_handler.delete_provider_connection(conn["id"])
                 st.session_state.pop("sync_external_accounts", None)
+                _set_flash("info", f"Disconnected {_connection_label(conn)}.")
                 st.rerun()
             except Exception as e:
                 st.error(f"Could not disconnect: {type(e).__name__}")
+        if conn["provider"] == "open_banking" and conn.get("status") == "needs_reauth":
+            if info_col.button("Refresh token / Reconnect", key=f"reconnect_{conn['id']}"):
+                with st.spinner("Refreshing Open Banking token..."):
+                    ok, message = _refresh_open_banking_connection(user_id, conn)
+                if ok:
+                    st.session_state.pop("sync_external_accounts", None)
+                    _set_flash("success", f"{_connection_label(conn)}: {message} Connection is active.")
+                    st.rerun()
+                else:
+                    st.error(f"{_connection_label(conn)}: {message} Connection stays in needs re-authentication.")
 
 
 def _render_mappings(user_id: str, connections: list) -> None:
@@ -245,9 +361,12 @@ def _render_mappings(user_id: str, connections: list) -> None:
 
     if st.button("Refresh external accounts", key="refresh_external_accounts", disabled=not connections):
         with st.spinner("Fetching balances (read-only)..."):
-            found, errors = _fetch_external_accounts(connections)
+            found, errors, changed = _fetch_external_accounts(user_id, connections)
         st.session_state.sync_external_accounts = found
         st.session_state.sync_external_errors = errors
+        if changed:
+            _set_flash("info", "Open Banking connection status was updated during refresh.")
+            st.rerun()
 
     for err in st.session_state.get("sync_external_errors", []):
         st.warning(err)
@@ -265,6 +384,7 @@ def _render_mappings(user_id: str, connections: list) -> None:
             if button_col.button("Unmap", key=f"unmap_{m['id']}"):
                 try:
                     db_handler.delete_account_mapping(m["id"])
+                    _set_flash("info", "Mapping removed.")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Could not remove mapping: {type(e).__name__}")
@@ -324,7 +444,7 @@ def _render_mappings(user_id: str, connections: list) -> None:
                     ext["name"],
                     selected_id,
                 )
-                st.success(f"Mapped {ext['name']} to {account_by_id[selected_id]['name']}.")
+                _set_flash("success", f"Mapped {ext['name']} to {account_by_id[selected_id]['name']}.")
                 st.rerun()
             except Exception as e:
                 st.error(f"Could not save mapping: {type(e).__name__}")
@@ -411,9 +531,10 @@ def _render_sync(user_id: str) -> None:
             elif st.button("Undo this sync", key=f"undo_{r['id']}"):
                 try:
                     outcome = undo_sync_run(db_handler, user_id, r["id"])
-                    st.success(
+                    _set_flash(
+                        "success",
                         f"Undone: {outcome['restored']} restored, {outcome['deleted']} deleted, "
-                        f"{outcome['skipped']} skipped (edited since sync)."
+                        f"{outcome['skipped']} skipped (edited since sync).",
                     )
                     st.rerun()
                 except Exception as e:
@@ -426,6 +547,7 @@ def render_connections_and_sync(user_id: str) -> None:
         "Connect Trading 212 or a bank, map external accounts to tracker accounts, and "
         "pull balances into Account Values."
     )
+    _show_flash()
     key_error = _sync_key_error()
     if key_error:
         st.warning(
@@ -440,7 +562,7 @@ def render_connections_and_sync(user_id: str) -> None:
         st.error(f"Could not load connections: {type(e).__name__}")
         return
 
-    _render_connections(connections)
+    _render_connections(user_id, connections)
     _render_trading212_connect(user_id)
     _render_open_banking_connect(user_id)
     _render_mappings(user_id, connections)
