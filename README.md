@@ -60,6 +60,22 @@ A Streamlit-based dashboard for tracking your net worth across different account
    server_metadata_url = "https://accounts.google.com/.well-known/openid-configuration"
    ```
 
+   ### Account value sync (optional)
+
+   Add to `.streamlit/secrets.toml`:
+
+   ```toml
+   [sync]
+   credentials_key = "<fernet-key-from-cryptography.fernet.Fernet.generate_key()>"
+
+   [gocardless]
+   secret_id = "..."
+   secret_key = "..."
+   ```
+
+   GitHub Actions month-end job needs repository secrets:
+   `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `SYNC_CREDENTIALS_KEY`.
+
 6. **Initialize Supabase project**
    ```bash
    npx supabase init
