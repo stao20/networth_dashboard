@@ -523,6 +523,25 @@ class SupabaseHandler(DatabaseHandler):
             logging.error(f"Error in update_provider_connection_status: {str(e)}")
             raise
 
+    def touch_provider_connection_synced(self, connection_id: str) -> None:
+        try:
+            (
+                self.supabase.table("provider_connections")
+                .update(
+                    {
+                        "status": "active",
+                        "last_error": None,
+                        "last_synced_at": "now()",
+                        "updated_at": "now()",
+                    }
+                )
+                .eq("id", connection_id)
+                .execute()
+            )
+        except Exception as e:
+            logging.error(f"Error in touch_provider_connection_synced: {str(e)}")
+            raise
+
     def delete_provider_connection(self, connection_id: str) -> None:
         try:
             self.supabase.table("provider_connections").delete().eq(

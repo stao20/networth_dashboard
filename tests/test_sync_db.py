@@ -147,6 +147,16 @@ def test_finalize_sync_run(handler, fake_supabase):
     assert update_args[0]["finished_at"] == "now()"
 
 
+def test_touch_provider_connection_synced(handler, fake_supabase):
+    fake_supabase.set_table("provider_connections", [{"id": "conn-1"}])
+    handler.touch_provider_connection_synced("conn-1")
+    chain = fake_supabase._tables["provider_connections"].calls
+    update_args = next(c[1] for c in chain if c[0] == "update")
+    assert update_args[0]["last_synced_at"] == "now()"
+    assert update_args[0]["status"] == "active"
+    assert update_args[0]["last_error"] is None
+
+
 def test_list_user_ids_with_active_connections(handler, fake_supabase):
     fake_supabase.set_table(
         "provider_connections",
