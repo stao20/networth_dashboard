@@ -182,7 +182,7 @@ class BalanceProvider(Protocol):
 ### 6.1 Open Banking
 
 - Connect flow creates/reuses a bank connection (requisition) and stores provider tokens/ids encrypted.
-- `list_balances` returns one `NormalizedBalance` per linked bank account with an available/current balance (prefer available when both exist; document choice in adapter).
+- `list_balances` returns one `NormalizedBalance` per linked bank account. Prefer booked/expected balances over available when both exist, and skip entries with `creditLimitIncluded` when another type is present (available can include overdraft/credit limit and overstate net worth). Document the choice in the adapter.
 - Consent expiry → mark connection `needs_reauth`, raise `ProviderAuthError`, orchestrator continues other providers.
 
 ### 6.2 Trading 212
