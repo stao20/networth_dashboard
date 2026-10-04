@@ -281,3 +281,132 @@ def test_default_providers_registry_used_when_none(mocker):
     )
     assert result["status"] == "success"
     assert db.saved
+
+
+class FailingSaveDb(FakeDb):
+    def __init__(self, *args, fail_accounts=(), **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fail_accounts = set(fail_accounts)
+
+    def save_account_value(self, account_id, date_str, value):
+        if account_id in self.fail_accounts:
+            raise RuntimeError("db down postgres://user:pw@host/db")
+        return super().save_account_value(account_id, date_str, value)
+
+
+def test_save_failure_is_isolated_and_run_finalized():
+    db = FailingSaveDb(
+        [conn("c1", "trading212"), conn("c2", "open_banking")],
+        [
+            mapping("c1", "ext-1", "acc-1"),
+            mapping("c1", "ext-2", "acc-2"),
+            mapping("c2", "ext-3", "acc-3"),
+        ],
+        fail_accounts={"acc-1"},
+    )
+    providers = {
+        "trading212": FakeProvider([bal("ext-1"), bal("ext-2", amount="20")]),
+        "open_banking": FakeProvider([bal("ext-3", amount="30")]),
+    }
+    result = run(db, providers)
+
+    assert db.saved == [("acc-2", "2026-09-30", 20.0), ("acc-3", "2026-09-30", 30.0)]
+    assert db.finalized is not None
+    assert result["status"] == "partial"
+    assert result["written_count"] == 2
+    assert result["error_count"] == 1
+    errors = [i for i in db.items if i["outcome"] == "error"]
+    assert len(errors) == 1
+    assert errors[0]["account_id"] == "acc-1"
+    assert errors[0]["reason"].startswith("write_failed")
+    assert "postgres" not in errors[0]["reason"]
+    assert db.synced == ["c1", "c2"]
+
+
+def test_converter_exception_is_isolated():
+    db = FakeDb([conn()], [mapping(), mapping(ext="ext-2", account_id="acc-2")])
+
+    def convert(amount, currency):
+        if currency == "USD":
+            raise ValueError("rate api key=SECRET")
+        return amount
+
+    result = run(
+        db,
+        {"trading212": FakeProvider([bal(currency="USD"), bal("ext-2")])},
+        convert=convert,
+    )
+    assert db.saved == [("acc-2", "2026-09-30", 100.0)]
+    assert result["status"] == "partial"
+    assert "SECRET" not in str(db.items)
+
+
+def test_unexpected_run_failure_still_finalizes():
+    class BrokenDb(FakeDb):
+        def list_account_mappings(self, user_id):
+            raise RuntimeError("connection reset")
+
+    db = BrokenDb([conn()], [mapping()])
+    result = run(db, {"trading212": FakeProvider([bal()])})
+    assert db.finalized is not None
+    assert result["status"] == "failed"
+    assert result["error_count"] == 1
+    assert "connection reset" not in str(result["notes"])
+
+
+def test_item_recording_failure_does_not_abort_run():
+    class ItemFailDb(FakeDb):
+        def add_sync_run_item(self, *args, **kwargs):
+            raise RuntimeError("insert failed")
+
+    db = ItemFailDb([conn()], [mapping()])
+    result = run(db, {"trading212": FakeProvider([bal()])})
+    assert db.saved
+    assert result["status"] == "success"
+    assert result["written_count"] == 1
+
+
+MESSY = "401 for https://api.example.com/v1?api_key=SECRETKEY123 Bearer TOKEN-abc password=hunter2"
+
+
+def assert_clean(text):
+    for needle in ("SECRETKEY123", "TOKEN-abc", "hunter2", "http", "api_key", "Bearer"):
+        assert needle not in text
+
+
+def test_provider_error_reasons_do_not_leak_credentials():
+    for exc, status in (
+        (ProviderAuthError(MESSY), "needs_reauth"),
+        (ProviderError(MESSY), "error"),
+        (RuntimeError(MESSY), "error"),
+    ):
+        db = FakeDb([conn()], [mapping()])
+        run(db, {"trading212": FakeProvider(error=exc)})
+        assert db.statuses["c1"][0] == status
+        assert_clean(db.statuses["c1"][1])
+        assert_clean(db.items[0]["reason"])
+
+
+def test_decrypt_failure_reason_is_sanitized():
+    def bad_decrypt(token):
+        raise ValueError(MESSY)
+
+    db = FakeDb([conn()], [mapping()])
+    run_sync(
+        db,
+        USER,
+        AS_OF,
+        "manual",
+        providers={"trading212": FakeProvider([bal()])},
+        convert_to_gbp=lambda a, c: a,
+        decrypt_credentials=bad_decrypt,
+    )
+    assert db.items[0]["reason"].startswith("decrypt_failed")
+    assert_clean(db.items[0]["reason"])
+    assert_clean(db.statuses["c1"][1])
+
+
+def test_logs_do_not_leak_credentials(caplog):
+    db = FakeDb([conn()], [mapping()])
+    run(db, {"trading212": FakeProvider(error=RuntimeError(MESSY))})
+    assert_clean(caplog.text)

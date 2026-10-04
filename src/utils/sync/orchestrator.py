@@ -7,6 +7,8 @@ from typing import Callable
 
 from utils.providers.base import BalanceProvider, ProviderAuthError, ProviderError
 
+logger = logging.getLogger(__name__)
+
 ConvertToGbp = Callable[[float, str], "float | None"]
 DecryptCredentials = Callable[[str], str]
 
@@ -33,6 +35,10 @@ def _default_decrypt(token: str) -> str:
     return decrypt_secret(token)
 
 
+def _reason(code: str, exc: BaseException | None = None) -> str:
+    return f"{code}: {type(exc).__name__}" if exc is not None else code
+
+
 def run_sync(
     db,
     user_id: str,
@@ -51,63 +57,38 @@ def run_sync(
     run = db.create_sync_run(user_id, trigger, as_of_date)
     run_id = run["id"]
 
-    connections = db.list_provider_connections(user_id)
-    mappings = db.list_account_mappings(user_id)
-    mapped_external = {
-        (m["provider_connection_id"], m["external_account_id"]): m for m in mappings
-    }
-    seen_mapped: set[tuple[str, str]] = set()
-    fetched_connections: dict[str, dict] = {}
-
     counts = {"written": 0, "skipped": 0, "error": 0}
+    notes: str | None = None
 
     def add_item(provider_name: str, outcome: str, **kwargs) -> None:
         counts[outcome] += 1
-        db.add_sync_run_item(run_id, provider_name, outcome, **kwargs)
-
-    for connection in connections:
-        if connection.get("status") != "active":
-            continue
-        connection_id = connection["id"]
-        provider_name = connection.get("provider", "")
-
-        provider = providers.get(provider_name)
-        if provider is None:
-            add_item(provider_name, "error", reason=f"unknown_provider:{provider_name}")
-            continue
-
         try:
-            connection = dict(connection)
-            connection["credentials"] = json.loads(
-                decrypt(connection["credentials_encrypted"])
-            )
-        except Exception:
-            logging.exception("Could not decrypt credentials for %s", connection_id)
-            db.update_provider_connection_status(
-                connection_id, "error", "credentials could not be decrypted"
-            )
-            add_item(provider_name, "error", reason="credentials_decrypt_failed")
-            continue
-
-        try:
-            balances = provider.list_balances(connection)
-        except ProviderAuthError as exc:
-            db.update_provider_connection_status(connection_id, "needs_reauth", str(exc))
-            add_item(provider_name, "error", reason=f"auth_error: {exc}")
-            continue
-        except ProviderError as exc:
-            db.update_provider_connection_status(connection_id, "error", str(exc))
-            add_item(provider_name, "error", reason=f"provider_error: {exc}")
-            continue
+            db.add_sync_run_item(run_id, provider_name, outcome, **kwargs)
         except Exception as exc:
-            logging.exception("Unexpected failure fetching %s", connection_id)
-            db.update_provider_connection_status(connection_id, "error", str(exc))
-            add_item(provider_name, "error", reason=f"provider_error: {exc}")
-            continue
+            logger.error(
+                "Could not record sync item for run %s: %s", run_id, type(exc).__name__
+            )
 
-        fetched_connections[connection_id] = connection
+    def set_status(connection_id: str, status: str, last_error: str) -> None:
+        try:
+            db.update_provider_connection_status(connection_id, status, last_error)
+        except Exception as exc:
+            logger.error(
+                "Could not update status of connection %s: %s",
+                connection_id,
+                type(exc).__name__,
+            )
 
-        for balance in balances:
+    try:
+        connections = db.list_provider_connections(user_id)
+        mappings = db.list_account_mappings(user_id)
+        mapped_external = {
+            (m["provider_connection_id"], m["external_account_id"]): m for m in mappings
+        }
+        seen_mapped: set[tuple[str, str]] = set()
+        fetched_connections: dict[str, dict] = {}
+
+        def sync_balance(provider_name: str, connection_id: str, balance) -> None:
             key = (connection_id, balance.external_account_id)
             mapping = mapped_external.get(key)
             amount = float(balance.amount)
@@ -121,26 +102,43 @@ def run_sync(
                     external_amount=amount,
                     external_currency=balance.currency,
                 )
-                continue
+                return
 
             seen_mapped.add(key)
             account_id = mapping["account_id"]
+            try:
+                gbp = convert(amount, balance.currency)
+                if gbp is None:
+                    add_item(
+                        provider_name,
+                        "error",
+                        account_id=account_id,
+                        external_account_id=balance.external_account_id,
+                        reason="conversion_failed",
+                        external_amount=amount,
+                        external_currency=balance.currency,
+                    )
+                    return
 
-            gbp = convert(amount, balance.currency)
-            if gbp is None:
+                previous = db.get_account_value(account_id, date_str)
+                db.save_account_value(account_id, date_str, gbp)
+            except Exception as exc:
+                logger.error(
+                    "Failed to convert or write balance for account %s: %s",
+                    account_id,
+                    type(exc).__name__,
+                )
                 add_item(
                     provider_name,
                     "error",
                     account_id=account_id,
                     external_account_id=balance.external_account_id,
-                    reason="conversion_failed",
+                    reason=_reason("write_failed", exc),
                     external_amount=amount,
                     external_currency=balance.currency,
                 )
-                continue
+                return
 
-            previous = db.get_account_value(account_id, date_str)
-            db.save_account_value(account_id, date_str, gbp)
             add_item(
                 provider_name,
                 "written",
@@ -153,31 +151,130 @@ def run_sync(
                 had_previous=previous is not None,
             )
 
-        db.touch_provider_connection_synced(connection_id)
+        def sync_connection(connection: dict) -> None:
+            connection_id = connection["id"]
+            provider_name = connection.get("provider", "")
 
-    for key, mapping in mapped_external.items():
-        connection = fetched_connections.get(key[0])
-        if connection is None or key in seen_mapped:
-            continue
-        add_item(
-            connection.get("provider", ""),
-            "skipped",
-            account_id=mapping["account_id"],
-            external_account_id=key[1],
-            reason="not_returned",
+            provider = providers.get(provider_name)
+            if provider is None:
+                add_item(
+                    provider_name, "error", reason=f"unknown_provider:{provider_name}"
+                )
+                return
+
+            try:
+                connection = dict(connection)
+                connection["credentials"] = json.loads(
+                    decrypt(connection["credentials_encrypted"])
+                )
+            except Exception as exc:
+                logger.error(
+                    "Could not decrypt credentials for connection %s: %s",
+                    connection_id,
+                    type(exc).__name__,
+                )
+                reason = _reason("decrypt_failed", exc)
+                set_status(connection_id, "error", reason)
+                add_item(provider_name, "error", reason=reason)
+                return
+
+            try:
+                balances = provider.list_balances(connection)
+            except ProviderAuthError as exc:
+                reason = _reason("provider_auth_error", exc)
+                set_status(connection_id, "needs_reauth", reason)
+                add_item(provider_name, "error", reason=reason)
+                return
+            except ProviderError as exc:
+                reason = _reason("provider_error", exc)
+                set_status(connection_id, "error", reason)
+                add_item(provider_name, "error", reason=reason)
+                return
+            except Exception as exc:
+                logger.error(
+                    "Unexpected failure fetching connection %s: %s",
+                    connection_id,
+                    type(exc).__name__,
+                )
+                reason = _reason("unexpected_provider_error", exc)
+                set_status(connection_id, "error", reason)
+                add_item(provider_name, "error", reason=reason)
+                return
+
+            fetched_connections[connection_id] = connection
+
+            for balance in balances:
+                try:
+                    sync_balance(provider_name, connection_id, balance)
+                except Exception as exc:
+                    logger.error(
+                        "Unexpected failure syncing a balance of connection %s: %s",
+                        connection_id,
+                        type(exc).__name__,
+                    )
+                    add_item(
+                        provider_name,
+                        "error",
+                        external_account_id=getattr(balance, "external_account_id", None),
+                        reason=_reason("write_failed", exc),
+                    )
+
+            try:
+                db.touch_provider_connection_synced(connection_id)
+            except Exception as exc:
+                logger.error(
+                    "Could not mark connection %s synced: %s",
+                    connection_id,
+                    type(exc).__name__,
+                )
+
+        for connection in connections:
+            if connection.get("status") != "active":
+                continue
+            try:
+                sync_connection(connection)
+            except Exception as exc:
+                logger.error(
+                    "Unexpected failure syncing connection %s: %s",
+                    connection.get("id"),
+                    type(exc).__name__,
+                )
+                fetched_connections.pop(connection.get("id"), None)
+                add_item(
+                    connection.get("provider", ""),
+                    "error",
+                    reason=_reason("unexpected_provider_error", exc),
+                )
+
+        for key, mapping in mapped_external.items():
+            connection = fetched_connections.get(key[0])
+            if connection is None or key in seen_mapped:
+                continue
+            add_item(
+                connection.get("provider", ""),
+                "skipped",
+                account_id=mapping["account_id"],
+                external_account_id=key[1],
+                reason="not_returned",
+            )
+    except Exception as exc:
+        logger.error("Sync run %s aborted: %s", run_id, type(exc).__name__)
+        counts["error"] += 1
+        notes = _reason("run_aborted", exc)
+    finally:
+        if counts["error"] and counts["written"]:
+            status = "partial"
+        elif counts["error"]:
+            status = "failed"
+        else:
+            status = "success"
+
+        result = db.finalize_sync_run(
+            run_id,
+            status,
+            counts["written"],
+            counts["skipped"],
+            counts["error"],
+            notes,
         )
-
-    if counts["error"] and counts["written"]:
-        status = "partial"
-    elif counts["error"]:
-        status = "failed"
-    else:
-        status = "success"
-
-    return db.finalize_sync_run(
-        run_id,
-        status,
-        counts["written"],
-        counts["skipped"],
-        counts["error"],
-    )
+    return result
