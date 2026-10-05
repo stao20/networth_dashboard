@@ -85,6 +85,16 @@ A Streamlit-based dashboard for tracking your net worth across different account
    mapped accounts on connections that need re-authentication or are in error,
    so a red workflow run means some balances were not updated.
 
+   **Local Trading 212 smoke (no Streamlit Cloud / no Supabase writes):**
+
+   ```bash
+   TRADING212_API_KEY=... TRADING212_API_SECRET=... \
+     uv run python scripts/smoke_trading212_sync.py
+   # optional: TRADING212_DEMO=1 for demo.trading212.com keys
+   ```
+
+   This calls the real Trading 212 API but keeps connections/sync runs in memory.
+
 6. **Initialize Supabase project**
    ```bash
    npx supabase init
