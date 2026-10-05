@@ -23,6 +23,17 @@ class Trading212Provider:
         creds = connection["credentials"]
         api_key = creds["api_key"]
         api_secret = creds["api_secret"]
+        # Local demo credentials — used with DEMO_SYNC=1; never a live key.
+        if api_key == "DEMO" and api_secret == "DEMO":
+            return [
+                NormalizedBalance(
+                    external_account_id="12345678",
+                    name="Trading 212 (12345678)",
+                    currency="GBP",
+                    amount=Decimal("15432.50"),
+                    raw={"id": 12345678, "totalValue": 15432.50, "currency": "GBP"},
+                )
+            ]
         base = creds.get("base_url", DEFAULT_BASE).rstrip("/")
         token = base64.b64encode(f"{api_key}:{api_secret}".encode()).decode()
         headers = {"Authorization": f"Basic {token}", "Accept": "application/json"}
