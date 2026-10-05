@@ -1,0 +1,22 @@
+{
+  "balances": [
+    {
+      "balanceAmount": {"amount": "1250.55", "currency": "GBP"},
+      "balanceType": "interimAvailable",
+      "creditLimitIncluded": false
+    },
+    {
+      "balanceAmount": {"amount": "3250.55", "currency": "GBP"},
+      "balanceType": "closingBooked",
+      "creditLimitIncluded": true
+    },
+    {
+      "balanceAmount": {"amount": "1300.00", "currency": "GBP"},
+      "balanceType": "closingBooked"
+    },
+    {
+      "balanceAmount": {"amount": "1280.00", "currency": "GBP"},
+      "balanceType": "expected"
+    }
+  ]
+}

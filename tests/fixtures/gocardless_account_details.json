@@ -1,0 +1,7 @@
+{
+  "account": {
+    "iban": "GB00TEST123",
+    "name": "Main Current",
+    "currency": "GBP"
+  }
+}

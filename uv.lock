@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.13"
 
 [[package]]
@@ -512,6 +512,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "authlib" },
+    { name = "cryptography" },
     { name = "pandas" },
     { name = "plotly" },
     { name = "requests" },
@@ -532,6 +533,7 @@ lint = [
 [package.metadata]
 requires-dist = [
     { name = "authlib", specifier = ">=1.6.0" },
+    { name = "cryptography", specifier = ">=44.0.0" },
     { name = "pandas", specifier = ">=2.2.3" },
     { name = "plotly", specifier = ">=6.0.0" },
     { name = "requests", specifier = ">=2.32.0" },

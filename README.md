@@ -60,6 +60,41 @@ A Streamlit-based dashboard for tracking your net worth across different account
    server_metadata_url = "https://accounts.google.com/.well-known/openid-configuration"
    ```
 
+   ### Account value sync (optional)
+
+   Add to `.streamlit/secrets.toml`:
+
+   ```toml
+   [sync]
+   credentials_key = "<fernet-key-from-cryptography.fernet.Fernet.generate_key()>"
+
+   [gocardless]
+   secret_id = "..."
+   secret_key = "..."
+   ```
+
+   GitHub Actions month-end job needs repository secrets:
+   `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `SYNC_CREDENTIALS_KEY`.
+
+   Optional repository secrets `GOCARDLESS_SECRET_ID` and `GOCARDLESS_SECRET_KEY`
+   (same values as `[gocardless]` above) let the job refresh Open Banking tokens.
+   Without them the job can only use each connection's stored refresh token, and
+   connections whose refresh token has expired are marked "needs re-authentication".
+
+   The job exits non-zero when any user's sync is partial or failed, including
+   mapped accounts on connections that need re-authentication or are in error,
+   so a red workflow run means some balances were not updated.
+
+   **Local Trading 212 smoke (no Streamlit Cloud / no Supabase writes):**
+
+   ```bash
+   TRADING212_API_KEY=... TRADING212_API_SECRET=... \
+     uv run python scripts/smoke_trading212_sync.py
+   # optional: TRADING212_DEMO=1 for demo.trading212.com keys
+   ```
+
+   This calls the real Trading 212 API but keeps connections/sync runs in memory.
+
 6. **Initialize Supabase project**
    ```bash
    npx supabase init
